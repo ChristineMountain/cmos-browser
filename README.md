@@ -16,10 +16,8 @@ the team through a **private** GitHub repo.
 
 ## Install (once per person)
 
-You need: a login on the server's remote desktop. **No GitHub account is needed
-to install or use the app.** You only need a free
-[GitHub account](https://github.com/signup) if you want your ratings and notes
-shared with the team; without one they stay on your own copy.
+You need: a login on the server's remote desktop, and a free
+[GitHub account](https://github.com/signup) to share ratings and notes.
 
 1. **Send the owner your GitHub username**, so they can invite you to the
    private ratings repo (see *For the owner* below). You can install before the
@@ -30,9 +28,9 @@ shared with the team; without one they stay on your own copy.
    bash <(curl -fsSL https://raw.githubusercontent.com/ChristineMountain/cmos-browser/main/install.sh)
    ```
 
-   It takes about 5 minutes the first time. It asks whether to sign in to
-   GitHub: answer `n` if you have no account. If you answer `y`, it shows a code
-   and opens a page in Firefox: paste the code there and click **Authorize**. It accepts the invitation to the ratings repo for
+   It takes about 5 minutes the first time. When it asks you to sign in to
+   GitHub, it shows a code and opens a page in Firefox: paste the code there
+   and click **Authorize**. It accepts the invitation to the ratings repo for
    you.
 3. Double-click **CMOS Browser** on your desktop. If the desktop asks whether to
    trust the launcher, choose *Launch Anyway* / *Mark as trusted*.
