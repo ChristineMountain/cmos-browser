@@ -69,9 +69,10 @@ input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px c
 
 /* ---------- layout ---------- */
 .layout { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 57px); }
-.sidebar { border-right: 1px solid var(--border); padding: 14px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 57px; height: calc(100vh - 57px); overflow: hidden; }
+.sidebar { border-right: 1px solid var(--border); padding: 14px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 57px; height: calc(100vh - 57px); overflow-y: auto; }
+.sidebar > .panel { flex-shrink: 0; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 9px; }
-.panel.grow { flex: 1; min-height: 0; }
+.panel.grow { flex: 1 0 320px; min-height: 320px; }
 .panel h3 { margin: 0 0 2px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .panel label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
 .row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
