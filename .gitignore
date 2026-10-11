@@ -1,0 +1,15 @@
+# Everything personal or generated stays out of git.
+.env/
+.venv/
+__pycache__/
+config.local.toml
+ratings-data/
+index.sqlite*
+userdata*.sqlite*
+cache/
+edit_key.txt
+server.log
+server.pid
+watchdog.lock
+watchdog.log
+*.bak

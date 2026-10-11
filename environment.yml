@@ -1,0 +1,15 @@
+# Python environment for CMOS Browser. install.sh creates it in ./.env, and
+# ./run.sh update refreshes it automatically whenever this file changes.
+name: cmos-browser
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.14        # 3.14+ has zstd built in (compression.zstd)
+  - numpy
+  - astropy
+  - fastapi
+  - uvicorn
+  - pillow
+  - pydantic>=2
+  - git                 # for updates and sharing ratings
+  - gh                  # GitHub sign-in

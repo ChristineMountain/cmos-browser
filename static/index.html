@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CMOS Browser</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%237c9cff'/><circle cx='11' cy='12' r='2' fill='white'/><circle cx='20' cy='19' r='1.4' fill='white'/></svg>">
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="icon-btn only-narrow" id="menuBtn" title="Filters" aria-label="Filters">☰</button>
+  <a class="brand" href="#/"><span class="logo"></span>CMOS&nbsp;Browser</a>
+  <div class="search">
+    <input id="q" type="search" placeholder="Search object, filter, file…" autocomplete="off">
+  </div>
+  <div class="stats" id="stats"></div>
+  <span class="ro-badge" id="roBadge" hidden title="You can browse, preview and download. Collections, ratings and notes can only be changed by the owner.">View only</span>
+  <button class="btn" id="whoBtn" hidden></button>
+  <button class="btn share-btn" id="shareBtn" title="Copy a link to exactly what you're looking at">Share</button>
+  <button class="icon-btn" id="themeBtn" title="Toggle light/dark" aria-label="Toggle theme">◐</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <section class="panel">
+      <h3>Filters</h3>
+      <label>Band / filter
+        <select id="fFilter"><option value="">Any</option></select>
+      </label>
+      <div class="row2">
+        <label>From night <input id="fFrom" type="date"></label>
+        <label>To night <input id="fTo" type="date"></label>
+      </div>
+      <div class="row2">
+        <label>Min exp (s) <input id="fExpMin" type="number" step="any" min="0" placeholder="any"></label>
+        <label>Max exp (s) <input id="fExpMax" type="number" step="any" min="0" placeholder="any"></label>
+      </div>
+      <div class="row2">
+        <label>Mode
+          <select id="fMode"><option value="">Any</option><option>10</option><option>12</option></select>
+        </label>
+        <label>Data
+          <select id="fKind"><option value="">All</option><option value="fits">FITS (preview)</option><option value="raw">Raw pack only</option></select>
+        </label>
+      </div>
+      <div class="row2">
+        <label>Rating
+          <select id="fRating"><option value="">Any</option><option value="1">★ 1+</option><option value="2">★★ 2+</option><option value="3">★★★ 3+</option><option value="4">★★★★ 4+</option><option value="5">★★★★★ 5</option></select>
+        </label>
+        <label class="check-inline"><span>&nbsp;</span><span><input id="fNote" type="checkbox"> Has notes</span></label>
+      </div>
+      <button class="link-btn" id="clearBtn">Clear all filters</button>
+    </section>
+
+    <section class="panel grow">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-side="nights">Nights</button>
+        <button class="tab" data-side="objects">Objects</button>
+        <button class="tab" data-side="collections">Collections</button>
+      </div>
+      <button class="btn small-btn edit-only" id="newColBtn" hidden>+ New collection</button>
+      <input id="sideFilter" class="side-filter" type="search" placeholder="Filter list…">
+      <ul class="side-list" id="sideList"></ul>
+    </section>
+  </aside>
+
+  <main class="main">
+    <div class="banner" id="newData" hidden>New data has been added. <button class="link-btn" id="reloadBtn">Reload</button></div>
+    <div class="toolbar">
+      <div class="chips" id="chips"></div>
+      <div class="spacer"></div>
+      <span class="muted" id="count"></span>
+      <button class="btn edit-only" id="selectBtn" title="Select several exposures to organize them">Select</button>
+      <select id="sort" title="Sort">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="object">By object</option>
+        <option value="exptime">Longest exposure</option>
+        <option value="rating">Highest rated</option>
+        <option value="added" id="sortAdded" hidden>Recently added to collection</option>
+      </select>
+    </div>
+    <div class="selbar" id="selbar" hidden>
+      <b id="selCount">0 selected</b>
+      <button class="link-btn" id="selAll">Select all shown</button>
+      <button class="link-btn" id="selNone">Clear</button>
+      <span class="spacer"></span>
+      <select id="selAdd"><option value="">Add to collection…</option></select>
+      <button class="btn" id="selRemove" hidden>Remove from this collection</button>
+      <select id="selRate"><option value="">Rate…</option><option value="5">★★★★★</option><option value="4">★★★★</option><option value="3">★★★</option><option value="2">★★</option><option value="1">★</option><option value="0">Clear rating</option></select>
+      <button class="btn" id="selDone">Done</button>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="more"><button class="btn" id="moreBtn" hidden>Load more</button></div>
+    <div class="empty" id="empty" hidden>No exposures match these filters.</div>
+  </main>
+</div>
+
+<!-- Exposure detail -->
+<div class="detail" id="detail" hidden>
+  <header class="detail-bar">
+    <button class="icon-btn" id="closeBtn" title="Back to gallery (Esc)" aria-label="Back">←</button>
+    <div class="detail-title">
+      <div id="dTitle" class="title"></div>
+      <div id="dSub" class="muted small"></div>
+    </div>
+    <div class="spacer"></div>
+    <a class="btn ext-btn" id="viewerBtn" target="_blank" rel="noopener" hidden title="Open this exposure in the image viewer on port 8003 (new tab)">Open in viewer ↗</a>
+    <button class="icon-btn" id="prevBtn" title="Previous exposure (←)" aria-label="Previous">‹</button>
+    <button class="icon-btn" id="nextBtn" title="Next exposure (→)" aria-label="Next">›</button>
+  </header>
+  <div class="detail-body">
+    <section class="viewer-wrap">
+      <div class="viewer-controls">
+        <label>Sensor <select id="vSensor"></select></label>
+        <label>Frame <input id="vFrame" type="number" min="0" value="0"></label>
+        <label>Bin <select id="vBin"></select></label>
+        <label>Stretch
+          <select id="vStretch">
+            <option value="linear">Linear</option><option value="sqrt">Sqrt</option>
+            <option value="log">Log</option><option value="asinh">Asinh</option>
+          </select>
+        </label>
+        <label>Colors
+          <select id="vCmap">
+            <option value="gray">Gray</option><option value="inv">Inverted</option>
+            <option value="heat">Heat</option><option value="viridis">Viridis</option>
+          </select>
+        </label>
+        <label class="check" title="Subtract each column's median per sensor (display only)"><input id="vFlat" type="checkbox"> Flatten columns</label>
+      </div>
+      <div class="viewer" id="viewer">
+        <canvas id="canvas"></canvas>
+        <div class="viewer-msg" id="vMsg"></div>
+        <div class="viewer-hud">
+          <span id="vReadout" class="readout"></span>
+          <span class="zoom-btns">
+            <button class="icon-btn sm" id="zoomOut" title="Zoom out">−</button>
+            <button class="icon-btn sm" id="zoomFit" title="Fit (double-click)">⤢</button>
+            <button class="icon-btn sm" id="zoomIn" title="Zoom in">+</button>
+          </span>
+        </div>
+      </div>
+      <div class="levels">
+        <canvas id="hist" height="56"></canvas>
+        <div class="level-row">
+          <label>Min <input id="vMinN" type="number" step="any"></label>
+          <input id="vMin" type="range" min="0" max="1000" step="1">
+        </div>
+        <div class="level-row">
+          <label>Max <input id="vMaxN" type="number" step="any"></label>
+          <input id="vMax" type="range" min="0" max="1000" step="1">
+        </div>
+        <div class="presets">
+          <span class="muted small">Auto levels:</span>
+          <button class="chip-btn" data-p="100">min–max</button>
+          <button class="chip-btn" data-p="99.9">99.9%</button>
+          <button class="chip-btn active" data-p="99.5">99.5%</button>
+          <button class="chip-btn" data-p="99">99%</button>
+          <button class="chip-btn" data-p="95">95%</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="info">
+      <div class="organize">
+        <div class="org-row">
+          <span class="stars" id="dStars" title="Your rating (keys 1–5, 0 clears)"></span>
+          <span class="muted small" id="dSaved"></span>
+        </div>
+        <div class="org-row cols">
+          <span id="dCols"></span>
+          <select id="dAddCol" class="edit-only"><option value="">+ Add to collection…</option></select>
+        </div>
+        <textarea id="dNote" rows="2" placeholder="Your notes on this exposure… (saved automatically)"></textarea>
+        <div id="dOthers" hidden></div>
+      </div>
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-info="summary">Summary</button>
+        <button class="tab" data-info="header">Header</button>
+        <button class="tab" data-info="meta">Telescope &amp; weather</button>
+        <button class="tab" data-info="files">Files</button>
+      </div>
+      <div class="info-body">
+        <div data-pane="summary"><table class="kv" id="summary"></table></div>
+        <div data-pane="header" hidden>
+          <div class="row2">
+            <select id="hdrFile"></select>
+            <input id="hdrFilter" type="search" placeholder="Find keyword…">
+          </div>
+          <div id="hdrBody" class="hdr"></div>
+        </div>
+        <div data-pane="meta" hidden><div id="metaBody"></div></div>
+        <div data-pane="files" hidden><div id="filesBody"></div></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<dialog id="shareDialog">
+  <h3>Share this view</h3>
+  <p class="muted small">Works for anyone who has CMOS Browser installed on the server: they open it in Firefox in their remote desktop.</p>
+  <input id="shareUrl" readonly>
+  <div class="dlg-err" id="shareMsg" style="color:var(--ok)"></div>
+  <div class="dlg-btns"><button class="btn" id="shareClose">Close</button><button class="btn primary" id="shareCopy">Copy link</button></div>
+</dialog>
+
+<dialog id="colDialog">
+  <form method="dialog" id="colForm">
+    <h3 id="colDlgTitle">New collection</h3>
+    <label>Name <input id="colName" required maxlength="120" autocomplete="off"></label>
+    <label>Description (optional) <textarea id="colDesc" rows="3" maxlength="2000"></textarea></label>
+    <div class="dlg-err" id="colErr"></div>
+    <div class="dlg-btns">
+      <button type="button" class="btn" id="colCancel">Cancel</button>
+      <button type="submit" class="btn primary" id="colOk">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

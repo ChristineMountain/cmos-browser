@@ -1,0 +1,62 @@
+# CMOS Browser configuration.
+# Edit this file, then rebuild the index (see README) and restart the server.
+
+# Top-level data directory. It is only ever READ, never written.
+data_root = "/data"
+
+# Which folders under data_root to index. These are glob patterns relative to
+# data_root. Each matching folder is scanned (not recursively) for exposures.
+# The default matches only the dated night folders such as 20260914.
+#
+# To add a folder later (after asking its owner), add a pattern, e.g.:
+#   "someone/project/*/*",
+#   "someone/20250916_TEST",
+include = [
+  "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]",
+]
+
+# Web server. Everyone runs their own copy in their own session, so it only
+# needs to be reachable from that session's Firefox.
+host = "127.0.0.1"
+port = 8010
+
+# Files the app creates (relative paths are inside the project folder).
+index_db = "index.sqlite"
+cache_dir = "cache"
+# Your collections, ratings and notes. Kept separate from the index so that
+# rebuilding the index never touches them. Back this file up if you care about it.
+user_db = "userdata.sqlite"
+
+# The server re-scans the data folders this often, at the lowest priority,
+# so new exposures appear without running ./run.sh index. 0 = off.
+auto_refresh_minutes = 15
+
+# "Open in viewer" links to the existing image viewer on port 8003.
+# {host} = where the viewer is, as seen by the person clicking; {dir} = folder,
+# {path} = folder/exposure, both under viewer_root (that viewer calls /data
+# "slow"); {ct} = current time in ms. Set viewer_url = "" to hide the links.
+# The viewer runs on the Docker host, outside this container, so the right
+# address depends on where the browser is:
+viewer_url = "http://{host}/viewer/?ct={ct}&dir={dir}&screen=viewer&path={path}"
+viewer_host_inside = "172.18.0.1:8003"   # Firefox in the remote desktop
+viewer_host_outside = "172.18.0.1:8003"   # coworkers' remote desktops on this server
+viewer_root = "slow"
+
+# Everyone who can open the app may change collections, ratings and notes.
+# false = only you (remote desktop, or a browser unlocked with ./run.sh editlink).
+everyone_can_edit = true
+
+# Safe sharing: the app reads files as YOUR account. When true, coworkers (view-only
+# visitors) can only preview, read headers of, and download files that EVERY account
+# on the server can read, so sharing never gives anyone more access than they have.
+# You (remote desktop or a browser unlocked with ./run.sh editlink) are not limited.
+safe_sharing = true
+
+# Thumbnail cache limits. Oldest thumbnails are removed above the cap, and
+# nothing is written to disk if free space would fall below min_free_mb.
+cache_max_mb = 200
+min_free_mb = 500
+
+# Timestamps in *_meta.json (start_time) are observatory local time.
+# Arizona is UTC-7 all year (no daylight saving).
+local_utc_offset_hours = -7
