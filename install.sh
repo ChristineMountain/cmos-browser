@@ -55,11 +55,16 @@ echo "ok: $(git log -1 --format='%h %s')"
 
 say "4/6  Sharing ratings and notes (GitHub sign-in)"
 ME=""
-if ! gh auth status --hostname github.com > /dev/null 2>&1; then
-  echo "Sign in to GitHub: it shows a code, opens a page, you paste the code and approve."
-  echo "(No GitHub account? Make one at https://github.com/signup, or press Ctrl+C here to skip sharing.)"
+# Required: everyone's verdicts, ratings and notes are recorded under their GitHub name.
+until gh auth status --hostname github.com > /dev/null 2>&1; do
+  echo "Sign in to GitHub (required): it shows a code, opens a page, you paste the code and approve."
+  echo "No GitHub account? Make one first at https://github.com/signup (free), then come back here."
   BROWSER=firefox gh auth login --hostname github.com --git-protocol https --web || true
-fi
+  if ! gh auth status --hostname github.com > /dev/null 2>&1; then
+    read -r -p "Not signed in. Press Enter to try again, or type q to quit: " answer < /dev/tty || answer=q
+    [[ $answer == [qQ]* ]] && { warn "Not installed: a GitHub sign-in is required. Run the installer again when ready."; exit 1; }
+  fi
+done
 if gh auth status --hostname github.com > /dev/null 2>&1; then
   gh auth setup-git --hostname github.com
   ME=$(gh api user --jq .login)
@@ -81,8 +86,6 @@ if gh auth status --hostname github.com > /dev/null 2>&1; then
     git -C ratings-data config user.name "$ME"
     git -C ratings-data config user.email "$ME@users.noreply.github.com"
   fi
-else
-  warn "Skipped. Your ratings and notes will stay on your copy. Run the installer again to set this up later."
 fi
 [[ -n $ME ]] && printf '# Personal settings for this copy (not shared, not in git).\nme = "%s"\n' "$ME" > config.local.toml
 
