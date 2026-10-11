@@ -49,19 +49,65 @@ The top bar shows who you are and whether sharing works, e.g.
 **👤 alice · synced 2 min ago**. Click it to sync right away. It turns red if
 the last sync failed; hover over it to see why.
 
+## Sorting through photos: verdicts, tags, triage
+
+Every photo can get a **verdict** and any number of **tags** from each person:
+
+- **Verdict**: ✅ **Good**, 🗑 **Junk** or ❔ **Unsure**. One per person per photo.
+  **Junk only marks a file.** The app never deletes anything. See *The junk
+  list* below.
+- **Tags**: free text, like categories you can search for later:
+  `satellite trail`, `cloudy`, `focus test`, `good seeing`… While you type, the
+  app suggests tags people have already used, so the team ends up using the
+  same words. Capitals don't matter (`Cloudy` and `cloudy` are one tag).
+
+**Triage** (button above the gallery) goes through the photos you haven't
+judged yet, one at a time, within whatever you're looking at (a night, an
+object, a search). The top bar shows how many are left. Keys:
+
+| Key | Does |
+|---|---|
+| `G` / `J` / `U` | Good / Junk / Unsure, and go to the next photo |
+| `T` | Type a tag (`Enter` adds it, `Esc` goes back) |
+| `→` | Skip this photo for now |
+| `1`–`5` | Star rating |
+| `Esc` | Stop triage |
+
+The same buttons and keys work on any photo's page outside triage too (press a
+verdict again to clear it). To judge or tag many photos at once: **Select** in
+the gallery, pick them, then *Verdict…* or *Tag…* (type `-cloudy` to remove a
+tag).
+
+**Finding photos again:**
+
+- **Sidebar → Tags** lists every tag with how many photos have it and who used
+  it. Click one to show those photos.
+- **Filters → Verdict**: Good / Junk / Unsure (by anyone), *Not judged by
+  anyone*, or *Not judged by me*.
+- **The search box** understands `tag:cloudy`, `tag:"satellite trail"`,
+  `verdict:junk` and `night:20260914`, combined with plain words, e.g.
+  `tag:"satellite trail" verdict:good M13`. Plain words also match tags.
+- Gallery cards show the verdicts (🗑 2 · ✅ 1 means two people said junk and
+  one said good; it's red when people disagree) and the tags.
+
+**The junk list:** *Filters → Download the junk list* gives a text file of
+every photo someone marked Junk: who marked it (and anyone who disagreed), and
+the full paths of its files. Hand it to whoever owns the data to review and
+delete. Disagreements are counted at the top so they get checked first.
+
 ## Ratings, notes and collections
 
-- **Ratings and notes are yours**, saved under your GitHub name. They are
-  shared automatically (a few seconds after you change something, and every
-  2 minutes) through the private repo `ChristineMountain/cmos-ratings`, one
-  file per person (`ratings/<name>.json`). Each exposure's page shows
-  everyone else's under **Others**.
+- **Verdicts, tags, ratings and notes are yours**, saved under your GitHub
+  name. They are shared automatically (a few seconds after you change something,
+  and every 2 minutes) through the private repo `ChristineMountain/cmos-ratings`,
+  one file per person (`ratings/<name>.json`). Each photo's page shows
+  everyone else's under **Others**, and everyone's tags are searchable.
 - **Collections stay on your copy**. They are not shared.
 - Everything is saved on your copy first, so the app works fine offline or if
   GitHub is down; it catches up later.
-- **Everyone's ratings and notes as a spreadsheet:** open
+- **Everything as a spreadsheet:** open
   http://localhost:8010/api/annotations/export.csv (one row per person per
-  exposure).
+  photo: verdict, rating, tags, note).
 
 ## Sharing links
 

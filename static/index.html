@@ -53,6 +53,13 @@
         </label>
         <label class="check-inline"><span>&nbsp;</span><span><input id="fNote" type="checkbox"> Has notes</span></label>
       </div>
+      <label>Verdict
+        <select id="fVerdict">
+          <option value="">Any</option><option value="good">✅ Good (by anyone)</option><option value="junk">🗑 Junk (by anyone)</option>
+          <option value="unsure">❔ Unsure (by anyone)</option><option value="none">Not judged by anyone</option><option value="todo">Not judged by me</option>
+        </select>
+      </label>
+      <a class="link-btn small" href="/api/junk.txt" title="Text file of everything marked Junk, with who said what. Nothing is deleted.">Download the junk list</a>
       <button class="link-btn" id="clearBtn">Clear all filters</button>
     </section>
 
@@ -61,6 +68,7 @@
         <button class="tab active" data-side="nights">Nights</button>
         <button class="tab" data-side="objects">Objects</button>
         <button class="tab" data-side="collections">Collections</button>
+        <button class="tab" data-side="tags">Tags</button>
       </div>
       <button class="btn small-btn edit-only" id="newColBtn" hidden>+ New collection</button>
       <input id="sideFilter" class="side-filter" type="search" placeholder="Filter list…">
@@ -74,6 +82,7 @@
       <div class="chips" id="chips"></div>
       <div class="spacer"></div>
       <span class="muted" id="count"></span>
+      <button class="btn primary edit-only" id="triageBtn" title="Go through the photos shown here that you haven't judged yet, one at a time">Triage</button>
       <button class="btn edit-only" id="selectBtn" title="Select several exposures to organize them">Select</button>
       <select id="sort" title="Sort">
         <option value="newest">Newest first</option>
@@ -91,6 +100,8 @@
       <span class="spacer"></span>
       <select id="selAdd"><option value="">Add to collection…</option></select>
       <button class="btn" id="selRemove" hidden>Remove from this collection</button>
+      <select id="selVerdict"><option value="">Verdict…</option><option value="good">✅ Good</option><option value="junk">🗑 Junk</option><option value="unsure">❔ Unsure</option><option value="">Clear verdict</option></select>
+      <button class="btn" id="selTag">Tag…</button>
       <select id="selRate"><option value="">Rate…</option><option value="5">★★★★★</option><option value="4">★★★★</option><option value="3">★★★</option><option value="2">★★</option><option value="1">★</option><option value="0">Clear rating</option></select>
       <button class="btn" id="selDone">Done</button>
     </div>
@@ -109,6 +120,10 @@
       <div id="dSub" class="muted small"></div>
     </div>
     <div class="spacer"></div>
+    <div class="triage-bar" id="triageBar" hidden>
+      <b>Triage</b> <span id="triageLeft" class="muted"></span>
+      <span class="keys"><kbd>G</kbd> good <kbd>J</kbd> junk <kbd>U</kbd> unsure <kbd>T</kbd> tag <kbd>→</kbd> skip <kbd>Esc</kbd> stop</span>
+    </div>
     <a class="btn ext-btn" id="viewerBtn" target="_blank" rel="noopener" hidden title="Open this exposure in the image viewer on port 8003 (new tab)">Open in viewer ↗</a>
     <button class="icon-btn" id="prevBtn" title="Previous exposure (←)" aria-label="Previous">‹</button>
     <button class="icon-btn" id="nextBtn" title="Next exposure (→)" aria-label="Next">›</button>
@@ -168,6 +183,15 @@
 
     <aside class="info">
       <div class="organize">
+        <div class="org-row verdicts" id="dVerdict">
+          <button data-v="good" title="Good (G)">✅ Good</button>
+          <button data-v="junk" title="Junk: mark for deletion (J). Nothing is deleted by the app.">🗑 Junk</button>
+          <button data-v="unsure" title="Unsure (U)">❔ Unsure</button>
+        </div>
+        <div class="org-row tags-row">
+          <span id="dTags"></span>
+          <input id="dTagIn" list="tagList" placeholder="+ tag (T)" maxlength="60" autocomplete="off" class="edit-only">
+        </div>
         <div class="org-row">
           <span class="stars" id="dStars" title="Your rating (keys 1–5, 0 clears)"></span>
           <span class="muted small" id="dSaved"></span>
@@ -221,6 +245,8 @@
     </div>
   </form>
 </dialog>
+
+<datalist id="tagList"></datalist>
 
 <script src="/static/app.js"></script>
 </body>

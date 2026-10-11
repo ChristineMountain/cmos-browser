@@ -7,6 +7,7 @@ import getpass
 import io
 import json
 import os
+import re
 import secrets
 import shutil
 import stat
@@ -151,10 +152,19 @@ CREATE TABLE IF NOT EXISTS collection_items (
 CREATE INDEX IF NOT EXISTS ix_items_exp ON collection_items(folder, prefix);
 CREATE TABLE IF NOT EXISTS annotations (
   user TEXT NOT NULL, folder TEXT NOT NULL, prefix TEXT NOT NULL, rating INTEGER, note TEXT, updated REAL,
+  verdict TEXT,  -- good / junk / unsure
   PRIMARY KEY (user, folder, prefix)
 );
 CREATE INDEX IF NOT EXISTS ix_ann_exp ON annotations(folder, prefix);
+CREATE TABLE IF NOT EXISTS tags (
+  user TEXT NOT NULL, folder TEXT NOT NULL, prefix TEXT NOT NULL, tag TEXT NOT NULL COLLATE NOCASE, added REAL,
+  PRIMARY KEY (user, folder, prefix, tag)
+);
+CREATE INDEX IF NOT EXISTS ix_tags_exp ON tags(folder, prefix);
+CREATE INDEX IF NOT EXISTS ix_tags_tag ON tags(tag);
 """
+VERDICTS = ("good", "junk", "unsure")
+EMPTY = "rating IS NULL AND note IS NULL AND verdict IS NULL"  # an annotation row with nothing left in it
 
 
 def udb():
@@ -179,6 +189,8 @@ with udb() as _c:
         _c.execute("INSERT INTO annotations (user, folder, prefix, rating, note, updated) "
                    "SELECT ?, folder, prefix, rating, note, updated FROM annotations_old", (ME,))
         _c.execute("DROP TABLE annotations_old")
+    if "verdict" not in [r[1] for r in _c.execute("PRAGMA table_info(annotations)")]:
+        _c.execute("ALTER TABLE annotations ADD COLUMN verdict TEXT")
     _c.executescript(USER_SCHEMA)
 
 
@@ -301,6 +313,14 @@ SORTS = {
     "rating": "coalesce(a.rating, 0) DESC, e.start_utc DESC",
     "added": "ci_added DESC, e.start_utc DESC",
 }
+SEARCH_TERM = re.compile(r'\b(tag|verdict|night):(?:"([^"]*)"|(\S+))', re.I)
+
+
+def clean_tag(t):
+    """Tags are free text: trimmed, single spaces, no leading #, at most 60 characters."""
+    return " ".join(str(t).lstrip("#").split())[:60]
+
+
 IN_COLLECTION = "EXISTS (SELECT 1 FROM u.collection_items ci WHERE ci.collection_id = ? AND ci.folder = e.folder AND ci.prefix = e.prefix)"
 
 
@@ -311,13 +331,37 @@ def exposures(
     exp_min: float | None = None, exp_max: float | None = None, mode: str | None = None,
     kind: str | None = Query(None, pattern="^(fits|raw)$"), sort: str = "newest",
     collection: int | None = None, rating: int | None = Query(None, ge=0, le=5),
-    has_note: bool = False,
+    has_note: bool = False, tag: list[str] = Query([]),
+    verdict: str | None = Query(None, pattern="^(good|junk|unsure|none|todo)$"),
     limit: int = Query(60, ge=1, le=500), offset: int = Query(0, ge=0),
 ):
     where, p = [], []
+    # The search box understands tag:cloudy, tag:"satellite trail", verdict:junk and night:20260914.
+    tags = list(tag)
+    for key, quoted, plain in SEARCH_TERM.findall(q or ""):
+        value = quoted or plain
+        if key.lower() == "tag":
+            tags.append(value)
+        elif key.lower() == "verdict" and value.lower() in VERDICTS + ("none", "todo"):
+            verdict = value.lower()
+        elif key.lower() == "night":  # 20260914 or 2026-09-14
+            v = value.replace("-", "")
+            night = f"{v[:4]}-{v[4:6]}-{v[6:8]}" if len(v) == 8 and v.isdigit() else value
+    q = SEARCH_TERM.sub(" ", q or "").strip()
     if q:
-        where.append("(e.object LIKE ? OR e.prefix LIKE ? OR e.filter LIKE ? OR e.note LIKE ? OR a.note LIKE ?)")
-        p += [f"%{q}%"] * 5
+        where.append("(e.object LIKE ? OR e.prefix LIKE ? OR e.filter LIKE ? OR e.note LIKE ? OR a.note LIKE ? "
+                     "OR EXISTS (SELECT 1 FROM u.tags t WHERE t.folder = e.folder AND t.prefix = e.prefix AND t.tag LIKE ?))")
+        p += [f"%{q}%"] * 6
+    for t in tags:
+        where.append("EXISTS (SELECT 1 FROM u.tags t WHERE t.folder = e.folder AND t.prefix = e.prefix AND t.tag = ?)")
+        p.append(clean_tag(t))
+    if verdict in VERDICTS:  # anyone gave this verdict
+        where.append("EXISTS (SELECT 1 FROM u.annotations x WHERE x.folder = e.folder AND x.prefix = e.prefix AND x.verdict = ?)")
+        p.append(verdict)
+    elif verdict == "none":  # nobody has judged it yet
+        where.append("NOT EXISTS (SELECT 1 FROM u.annotations x WHERE x.folder = e.folder AND x.prefix = e.prefix AND x.verdict IS NOT NULL)")
+    elif verdict == "todo":  # I haven't judged it yet
+        where.append("a.verdict IS NULL")
     if night:
         where.append("e.night = ?"); p.append(night)
     if object is not None:
@@ -359,11 +403,19 @@ def exposures(
                             e.exptime_src, e.nexp, e.n_frames, e.mode, e.start_utc, e.start_local, e.n_sensors,
                             e.n_fits, e.total_bytes, e.formats, e.signature, e.airmass, e.error, e.n_files,
                             (SELECT count(*) FROM files f WHERE f.exposure_id = e.id AND f.readable) AS n_readable,
-                            a.rating, coalesce(a.note, '') != '' AS has_note,
+                            a.rating, coalesce(a.note, '') != '' AS has_note, a.verdict,
+                            (SELECT group_concat(tag, char(31)) FROM (SELECT DISTINCT t.tag FROM u.tags t
+                               WHERE t.folder = e.folder AND t.prefix = e.prefix ORDER BY t.tag)) AS tags,
+                            (SELECT group_concat(x.verdict, char(31)) FROM u.annotations x
+                               WHERE x.folder = e.folder AND x.prefix = e.prefix AND x.verdict IS NOT NULL) AS verdicts,
                             (SELECT count(*) FROM u.collection_items ci WHERE ci.folder = e.folder AND ci.prefix = e.prefix) AS n_collections,
                             {added} AS ci_added
                      {frm} {w} ORDER BY {SORTS.get(sort, SORTS['newest'])} LIMIT ? OFFSET ?""",
                  ([collection] if sort == "added" else []) + p + [limit, offset])
+    for it in items:
+        it["tags"] = it["tags"].split("\x1f") if it["tags"] else []
+        vs = it["verdicts"].split("\x1f") if it["verdicts"] else []
+        it["verdicts"] = {v: vs.count(v) for v in VERDICTS if v in vs}
     if restricted(request):
         for it in items:
             it["preview_shared"] = bool(it["n_fits"]) and bool(preview_files(it["id"], request))
@@ -371,16 +423,20 @@ def exposures(
 
 
 def user_info(e, user):
-    """This person's rating and note, everyone else's, and the collections for one exposure."""
+    """My rating, note, verdict and tags, everyone else's, and the collections for one exposure."""
+    k = (e["folder"], e["prefix"])
     with udb() as con:
-        a = con.execute("SELECT rating, note FROM annotations WHERE user=? AND folder=? AND prefix=?",
-                        (user or "", e["folder"], e["prefix"])).fetchone()
-        others = con.execute("""SELECT user, rating, note FROM annotations WHERE folder=? AND prefix=? AND user != ?
-                                ORDER BY updated DESC""", (e["folder"], e["prefix"], user or "")).fetchall()
+        people = {}
+        for a in con.execute("SELECT user, rating, note, verdict FROM annotations WHERE folder=? AND prefix=? "
+                             "ORDER BY updated DESC", k):
+            people[a["user"]] = {"user": a["user"], "rating": a["rating"], "note": a["note"], "verdict": a["verdict"], "tags": []}
+        for t in con.execute("SELECT user, tag FROM tags WHERE folder=? AND prefix=? ORDER BY added", k):
+            people.setdefault(t["user"], {"user": t["user"], "rating": None, "note": None, "verdict": None, "tags": []})["tags"].append(t["tag"])
         cols = con.execute("""SELECT c.id, c.name FROM collections c JOIN collection_items ci ON ci.collection_id = c.id
-                              WHERE ci.folder=? AND ci.prefix=? ORDER BY c.name""", (e["folder"], e["prefix"])).fetchall()
-    return {"rating": a["rating"] if a else None, "user_note": a["note"] if a else None,
-            "others": [dict(o) for o in others], "collections": [dict(c) for c in cols]}
+                              WHERE ci.folder=? AND ci.prefix=? ORDER BY c.name""", k).fetchall()
+    me = people.pop(user, {})
+    return {"rating": me.get("rating"), "user_note": me.get("note"), "verdict": me.get("verdict"),
+            "tags": me.get("tags", []), "others": list(people.values()), "collections": [dict(c) for c in cols]}
 
 
 @app.get("/api/exposures/{eid}")
@@ -645,10 +701,24 @@ class ExposureIds(BaseModel):
 class Annotation(BaseModel):
     rating: int | None = Field(None, ge=0, le=5)
     note: str | None = Field(None, max_length=20000)
+    verdict: str | None = Field(None, pattern="^(good|junk|unsure|)$")  # "" clears it
 
 
 class BulkRating(ExposureIds):
     rating: int = Field(ge=0, le=5)
+
+
+class BulkVerdict(ExposureIds):
+    verdict: str = Field(pattern="^(good|junk|unsure|)$")
+
+
+class TagChange(BaseModel):
+    add: list[str] = Field([], max_length=50)
+    remove: list[str] = Field([], max_length=50)
+
+
+class BulkTags(ExposureIds, TagChange):
+    pass
 
 
 def keys_for(ids):
@@ -772,7 +842,10 @@ def set_annotation(eid: int, body: Annotation, user: str = Depends(require_user)
             note = (fields["note"] or "").strip() or None
             con.execute("UPDATE annotations SET note=?, updated=? WHERE user=? AND folder=? AND prefix=?",
                         (note, time.time()) + k)
-        con.execute("DELETE FROM annotations WHERE rating IS NULL AND note IS NULL AND user=? AND folder=? AND prefix=?", k)
+        if "verdict" in fields:
+            con.execute("UPDATE annotations SET verdict=?, updated=? WHERE user=? AND folder=? AND prefix=?",
+                        (fields["verdict"] or None, time.time()) + k)
+        con.execute(f"DELETE FROM annotations WHERE {EMPTY} AND user=? AND folder=? AND prefix=?", k)
     sync.request_sync()
     return user_info(e, user)
 
@@ -786,24 +859,111 @@ def bulk_rating(body: BulkRating, user: str = Depends(require_user)):
             con.execute("INSERT OR IGNORE INTO annotations (user, folder, prefix, updated) VALUES (?,?,?,?)", (user, f, p, now))
             con.execute("UPDATE annotations SET rating=?, updated=? WHERE user=? AND folder=? AND prefix=?",
                         (body.rating or None, now, user, f, p))
-        con.execute("DELETE FROM annotations WHERE rating IS NULL AND note IS NULL AND user=?", (user,))
+        con.execute(f"DELETE FROM annotations WHERE {EMPTY} AND user=?", (user,))
     sync.request_sync()
     return {"updated": len(keys)}
 
 
+@app.post("/api/annotations/verdict", dependencies=[Depends(require_edit)])
+def bulk_verdict(body: BulkVerdict, user: str = Depends(require_user)):
+    keys = keys_for(body.exposure_ids)
+    now = time.time()
+    with udb() as con:
+        for f, p in keys:
+            con.execute("INSERT OR IGNORE INTO annotations (user, folder, prefix, updated) VALUES (?,?,?,?)", (user, f, p, now))
+            con.execute("UPDATE annotations SET verdict=?, updated=? WHERE user=? AND folder=? AND prefix=?",
+                        (body.verdict or None, now, user, f, p))
+        con.execute(f"DELETE FROM annotations WHERE {EMPTY} AND user=?", (user,))
+    sync.request_sync()
+    return {"updated": len(keys)}
+
+
+def change_tags(con, user, keys, add, remove):
+    now = time.time()
+    for t in filter(None, map(clean_tag, add)):
+        # reuse the spelling someone already used ("Cloudy" and "cloudy" are one tag)
+        t = (con.execute("SELECT tag FROM tags WHERE tag = ? LIMIT 1", (t,)).fetchone() or [t])[0]
+        con.executemany("INSERT OR IGNORE INTO tags (user, folder, prefix, tag, added) VALUES (?,?,?,?,?)",
+                        [(user, f, p, t, now) for f, p in keys])
+    for t in filter(None, map(clean_tag, remove)):
+        con.executemany("DELETE FROM tags WHERE user=? AND folder=? AND prefix=? AND tag=?", [(user, f, p, t) for f, p in keys])
+
+
+@app.put("/api/exposures/{eid}/tags", dependencies=[Depends(require_edit)])
+def set_tags(eid: int, body: TagChange, user: str = Depends(require_user)):
+    """Add and/or remove my tags on one exposure."""
+    e = get_exposure(eid)
+    with udb() as con:
+        change_tags(con, user, [(e["folder"], e["prefix"])], body.add, body.remove)
+    sync.request_sync()
+    return user_info(e, user)
+
+
+@app.post("/api/tags/bulk", dependencies=[Depends(require_edit)])
+def bulk_tags(body: BulkTags, user: str = Depends(require_user)):
+    keys = keys_for(body.exposure_ids)
+    with udb() as con:
+        change_tags(con, user, keys, body.add, body.remove)
+    sync.request_sync()
+    return {"updated": len(keys)}
+
+
+@app.get("/api/tags")
+def all_tags():
+    """Every tag anyone has used, with how many exposures have it and who used it (for the sidebar and suggestions)."""
+    with udb() as con:
+        return [dict(r) for r in con.execute(
+            """SELECT tag, count(DISTINCT folder || '/' || prefix) AS n, group_concat(DISTINCT user) AS people
+               FROM tags GROUP BY tag COLLATE NOCASE ORDER BY n DESC, tag COLLATE NOCASE""")]
+
+
+@app.get("/api/junk.txt")
+def export_junk():
+    """Files someone marked Junk, with who said what, for the data owner to review. The app never deletes anything."""
+    with udb() as con:
+        marks = con.execute("""SELECT folder, prefix,
+                                      group_concat(CASE WHEN verdict='junk' THEN user END) AS junk,
+                                      group_concat(CASE WHEN verdict='good' THEN user END) AS good,
+                                      group_concat(CASE WHEN verdict='unsure' THEN user END) AS unsure
+                               FROM annotations WHERE verdict IS NOT NULL GROUP BY folder, prefix
+                               HAVING junk IS NOT NULL ORDER BY folder, prefix""").fetchall()
+    disputed = sum(1 for m in marks if m["good"] or m["unsure"])
+    lines = ["# Exposures marked Junk in CMOS Browser. Nothing has been deleted.",
+             f"# {len(marks)} exposures ({disputed} where someone disagreed: check those first).",
+             "# One original file path per line; '#' lines say who marked what.", ""]
+    with db() as con:
+        for m in marks:
+            who = f"junk: {m['junk']}" + (f"; good: {m['good']}" if m["good"] else "") + (f"; unsure: {m['unsure']}" if m["unsure"] else "")
+            lines.append(f"# {m['folder']}/{m['prefix']}  ({who})")
+            e = con.execute("SELECT id FROM exposures WHERE folder=? AND prefix=?", (m["folder"], m["prefix"])).fetchone()
+            meta = os.path.join(CFG["data_root"], m["folder"], m["prefix"] + cd.META_SUFFIX)
+            if os.path.exists(meta):
+                lines.append(meta)
+            if e:
+                lines += [f["path"] for f in con.execute("SELECT path FROM files WHERE exposure_id=? ORDER BY sensor, format", (e["id"],))]
+    return Response("\n".join(lines) + "\n", media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="junk-files.txt"'})
+
+
 @app.get("/api/annotations/export.csv")
 def export_annotations():
-    """Everyone's ratings and notes as a spreadsheet: one row per person per exposure."""
+    """Everyone's verdicts, ratings, tags and notes as a spreadsheet: one row per person per exposure."""
+    out = {}
     with udb() as con:
-        ann = con.execute("SELECT user, folder, prefix, rating, note, updated FROM annotations "
-                          "ORDER BY folder, prefix, user").fetchall()
-    out = io.StringIO()
-    w = csv.writer(out)
-    w.writerow(["person", "folder", "exposure", "rating", "note", "updated_utc"])
-    for a in ann:
-        w.writerow([a["user"], a["folder"], a["prefix"], a["rating"] or "", a["note"] or "",
-                    time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(a["updated"])) if a["updated"] else ""])
-    return Response(out.getvalue(), media_type="text/csv; charset=utf-8",
+        for a in con.execute("SELECT user, folder, prefix, rating, note, verdict, updated FROM annotations"):
+            out[(a["folder"], a["prefix"], a["user"])] = dict(a, tags=[])
+        for t in con.execute("SELECT user, folder, prefix, tag, added FROM tags ORDER BY added"):
+            r = out.setdefault((t["folder"], t["prefix"], t["user"]), {"rating": None, "note": None, "verdict": None,
+                                                                      "updated": t["added"], "tags": []})
+            r["tags"].append(t["tag"])
+            r["updated"] = max(r["updated"] or 0, t["added"] or 0)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["person", "folder", "exposure", "verdict", "rating", "tags", "note", "updated_utc"])
+    for (folder, prefix, user), r in sorted(out.items()):
+        w.writerow([user, folder, prefix, r["verdict"] or "", r["rating"] or "", "; ".join(r["tags"]), r["note"] or "",
+                    time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(r["updated"])) if r["updated"] else ""])
+    return Response(buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": 'attachment; filename="ratings-and-notes.csv"'})
 
 

@@ -1,6 +1,6 @@
 """Share ratings and notes through a private GitHub repo.
 
-Each person's copy of the app keeps its own ratings and notes in userdata.sqlite
+Each person's copy of the app keeps its own verdicts, ratings, tags and notes in userdata.sqlite
 and mirrors them to <ratings repo>/ratings/<GitHub login>.json. Everyone else's
 files are read back in, so each exposure shows what the others thought.
 One file per person means two people saving at the same time never collide.
@@ -37,8 +37,16 @@ def enabled():
 
 
 def _own_rows(con, me):
-    return [dict(r) for r in con.execute(
-        "SELECT folder, prefix, rating, note, updated FROM annotations WHERE user=? ORDER BY folder, prefix", (me,))]
+    """My verdicts, ratings, notes and tags, one entry per exposure."""
+    out = {}
+    for r in con.execute("SELECT folder, prefix, verdict, rating, note, updated FROM annotations WHERE user=?", (me,)):
+        out[(r["folder"], r["prefix"])] = dict(r, tags=[])
+    for t in con.execute("SELECT folder, prefix, tag, added FROM tags WHERE user=? ORDER BY tag COLLATE NOCASE", (me,)):
+        e = out.setdefault((t["folder"], t["prefix"]), {"folder": t["folder"], "prefix": t["prefix"], "verdict": None,
+                                                        "rating": None, "note": None, "updated": t["added"], "tags": []})
+        e["tags"].append(t["tag"])
+        e["updated"] = max(e["updated"] or 0, t["added"] or 0)
+    return [out[k] for k in sorted(out)]
 
 
 def _write_own(con, me):
@@ -59,8 +67,12 @@ def _read(path):
 
 def _replace_user(con, user, items):
     con.execute("DELETE FROM annotations WHERE user=?", (user,))
-    con.executemany("INSERT OR REPLACE INTO annotations (user, folder, prefix, rating, note, updated) VALUES (?,?,?,?,?,?)",
-                    [(user, a["folder"], a["prefix"], a.get("rating"), a.get("note"), a.get("updated")) for a in items])
+    con.execute("DELETE FROM tags WHERE user=?", (user,))
+    con.executemany("INSERT OR REPLACE INTO annotations (user, folder, prefix, rating, note, verdict, updated) VALUES (?,?,?,?,?,?,?)",
+                    [(user, a["folder"], a["prefix"], a.get("rating"), a.get("note"), a.get("verdict"), a.get("updated"))
+                     for a in items if a.get("rating") or a.get("note") or a.get("verdict")])
+    con.executemany("INSERT OR IGNORE INTO tags (user, folder, prefix, tag, added) VALUES (?,?,?,?,?)",
+                    [(user, a["folder"], a["prefix"], t, a.get("updated")) for a in items for t in a.get("tags", [])])
 
 
 def sync_once(udb, me):
@@ -84,7 +96,7 @@ def sync_once(udb, me):
                 changed = _write_own(con, me)
             if changed:
                 git("add", os.path.join("ratings", f"{me}.json"))
-                git("commit", "--quiet", "-m", f"Update {me}'s ratings and notes")
+                git("commit", "--quiet", "-m", f"Update {me}'s ratings, tags and notes")
             if git("rev-list", "--count", "@{u}..HEAD").strip() != "0":
                 try:
                     git("push", "--quiet", timeout=60)
@@ -96,10 +108,11 @@ def sync_once(udb, me):
                 for person, path in people.items():
                     if person != me:
                         _replace_user(con, person, _read(path))
-                gone = [r[0] for r in con.execute("SELECT DISTINCT user FROM annotations")
+                gone = [r[0] for r in con.execute("SELECT user FROM annotations UNION SELECT user FROM tags")
                         if r[0] != me and r[0] not in people]
                 for person in gone:
                     con.execute("DELETE FROM annotations WHERE user=?", (person,))
+                    con.execute("DELETE FROM tags WHERE user=?", (person,))
             status.update(last_ok=time.time(), error=None)
         except Exception as e:  # offline, GitHub down, no access yet…: try again next round
             status["error"] = str(e)[:300]

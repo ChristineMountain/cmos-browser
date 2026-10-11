@@ -54,7 +54,8 @@ const filterBadge = (f) => f ? `<span class="badge f" style="background:${FILTER
 
 // ------------------------------------------------------------------ URL state
 // Gallery state lives in the URL hash (#/?night=…&object=…), detail in #/exp/<id>.
-const KEYS = ["q", "night", "object", "collection", "filter", "date_from", "date_to", "exp_min", "exp_max", "mode", "kind", "rating", "has_note", "sort"];
+const KEYS = ["q", "night", "object", "collection", "tag", "verdict", "filter", "date_from", "date_to", "exp_min", "exp_max", "mode", "kind", "rating", "has_note", "sort"];
+const VERDICT = { good: "✅ Good", junk: "🗑 Junk", unsure: "❔ Unsure" };
 function parseHash() {
   const h = location.hash.slice(1) || "/";
   const [path, qs] = h.split("?");
@@ -129,7 +130,7 @@ function viewerUrl(e) {
 }
 
 // ------------------------------------------------------------------ sidebar
-let sideMode = "nights", nightsData = [], objectsData = [], collectionsData = [];
+let sideMode = "nights", nightsData = [], objectsData = [], collectionsData = [], tagsData = [];
 $$(".sidebar .tab").forEach((t) => t.onclick = () => {
   sideMode = t.dataset.side;
   $$(".sidebar .tab").forEach((x) => x.classList.toggle("active", x === t));
@@ -140,12 +141,20 @@ $("#sideFilter").oninput = () => renderSide();
 async function loadSide() {
   [nightsData, objectsData] = await Promise.all([api("/api/nights"), api("/api/objects")]);
   await loadCollections();
+  await loadTags();
   const filters = await api("/api/filters");
   $("#fFilter").innerHTML = `<option value="">Any</option>` +
     filters.filter((f) => f.name).map((f) => `<option value="${esc(f.name)}">${esc(f.name)} (${f.n})</option>`).join("");
   syncControls();
   renderSide();
   renderChips(new URLSearchParams(galleryHash.split("?")[1] || ""));  // names are known now
+}
+
+// Every tag anyone has used: the sidebar list and the suggestions while typing.
+async function loadTags() {
+  tagsData = await api("/api/tags");
+  $("#tagList").innerHTML = tagsData.map((t) => `<option value="${esc(t.tag)}">`).join("");
+  if (sideMode === "tags") renderSide();
 }
 
 async function loadCollections() {
@@ -161,6 +170,21 @@ function renderSide() {
   const term = $("#sideFilter").value.trim().toLowerCase();
   const ul = $("#sideList");
   $("#newColBtn").hidden = sideMode !== "collections";
+  if (sideMode === "tags") {
+    if (!tagsData.length) {
+      ul.innerHTML = `<li class="hint">No tags yet.<br><br>Open a photo (or use <b>Triage</b>) and type a tag under the verdict buttons: anything that helps find it later, like <i>satellite trail</i> or <i>cloudy</i>.</li>`;
+      return;
+    }
+    ul.innerHTML = tagsData.filter((t) => !term || t.tag.toLowerCase().includes(term)).map((t) =>
+      `<li data-tag="${esc(t.tag)}" class="${params.get("tag")?.toLowerCase() === t.tag.toLowerCase() ? "active" : ""}">
+        <span class="name">🏷 ${esc(t.tag)}</span><span class="n">${t.n}</span>
+        <span class="sub">by ${esc(t.people.split(",").join(", "))}</span></li>`).join("");
+    $$("li", ul).forEach((li) => li.onclick = () => {
+      setParams({ tag: params.get("tag") === li.dataset.tag ? null : li.dataset.tag });
+      $("#sidebar").classList.remove("open");
+    });
+    return;
+  }
   if (sideMode === "collections") {
     const list = collectionsData.filter((c) => !term || c.name.toLowerCase().includes(term));
     if (!collectionsData.length) {
@@ -215,7 +239,7 @@ function renderSide() {
 }
 
 // ------------------------------------------------------------------ filter controls
-const CONTROLS = { fFilter: "filter", fFrom: "date_from", fTo: "date_to", fExpMin: "exp_min", fExpMax: "exp_max", fMode: "mode", fKind: "kind", fRating: "rating", sort: "sort" };
+const CONTROLS = { fVerdict: "verdict", fFilter: "filter", fFrom: "date_from", fTo: "date_to", fExpMin: "exp_min", fExpMax: "exp_max", fMode: "mode", fKind: "kind", fRating: "rating", sort: "sort" };
 for (const [id, key] of Object.entries(CONTROLS)) {
   $("#" + id).onchange = (e) => setParams({ [key]: e.target.value });
 }
@@ -241,6 +265,8 @@ function renderChips(params) {
     kind: (v) => (v === "fits" ? "FITS only" : "Raw only"),
     collection: (v) => `📁 ${collectionsData.find((c) => String(c.id) === v)?.name || "Collection " + v}`,
     rating: (v) => `${"★".repeat(+v)}${+v < 5 ? "+" : ""}`, has_note: () => "Has notes",
+    tag: (v) => `🏷 ${v}`,
+    verdict: (v) => VERDICT[v] || (v === "none" ? "Not judged yet" : "Not judged by me"),
   };
   $("#chips").innerHTML = KEYS.filter((k) => k !== "sort" && params.get(k))
     .map((k) => `<span class="chip">${esc(label[k](params.get(k)))}<button data-k="${k}" title="Remove">×</button></span>`).join("");
@@ -306,6 +332,8 @@ function cardHTML(e) {
   const flags = [
     e.rating ? `<span class="st" title="Your rating">${"★".repeat(e.rating)}</span>` : "",
     e.has_note ? `<span title="Has your notes">📝</span>` : "",
+    verdictFlag(e),
+    e.tags.length ? `<span class="card-tags" title="${esc(e.tags.join(", "))}">🏷 ${esc(e.tags.slice(0, 2).join(", "))}${e.tags.length > 2 ? ` +${e.tags.length - 2}` : ""}</span>` : "",
     e.n_collections ? `<span title="In ${e.n_collections} collection${e.n_collections === 1 ? "" : "s"}">📁 ${e.n_collections}</span>` : "",
   ].join("");
   return `<a class="card${selected.has(e.id) ? " selected" : ""}" href="#/exp/${e.id}" data-id="${e.id}">
@@ -324,6 +352,15 @@ function cardHTML(e) {
       </div>
       <div class="card-flags">${flags}</div>
     </div></a>`;
+}
+
+// My verdict, plus everyone's counts when people have judged it (e.g. "🗑 2 · ✅ 1").
+function verdictFlag(e) {
+  const all = Object.entries(e.verdicts || {});
+  if (!all.length) return "";
+  const title = all.map(([v, n]) => `${VERDICT[v]}: ${n}`).join(", ") + (e.verdict ? ` (yours: ${VERDICT[e.verdict]})` : "");
+  const text = all.length === 1 && all[0][1] === 1 ? VERDICT[all[0][0]].split(" ")[0] : all.map(([v, n]) => `${VERDICT[v].split(" ")[0]} ${n}`).join(" · ");
+  return `<span class="vflag${all.length > 1 ? " disputed" : ""}" title="${esc(title)}">${text}</span>`;
 }
 
 // ------------------------------------------------------------------ selecting & organizing in the gallery
@@ -402,6 +439,27 @@ $("#selRemove").onclick = async () => {
     setSelecting(false);
     await refreshGallery();
     toast(`Removed ${r.removed} from the collection (the data is not affected)`);
+  } catch (err) { alert(err.message); }
+};
+$("#selVerdict").onchange = async (e) => {
+  const v = e.target.value, label = e.target.selectedOptions[0].textContent;
+  e.target.value = "";
+  if (label === "Verdict…" || !selected.size) return;
+  try {
+    await post("/api/annotations/verdict", { exposure_ids: [...selected], verdict: v });
+    setSelecting(false);
+    await refreshGallery();
+  } catch (err) { alert(err.message); }
+};
+$("#selTag").onclick = async () => {
+  if (!selected.size) return;
+  const t = prompt(`Tag for the ${selected.size} selected photo${selected.size === 1 ? "" : "s"} (start with - to remove a tag):`);
+  if (!t || !t.trim()) return;
+  const remove = t.trim().startsWith("-");
+  try {
+    await post("/api/tags/bulk", { exposure_ids: [...selected], [remove ? "remove" : "add"]: [t.trim().replace(/^-/, "")] });
+    setSelecting(false);
+    await Promise.all([refreshGallery(), loadTags()]);
   } catch (err) { alert(err.message); }
 };
 $("#selRate").onchange = async (e) => {
@@ -522,8 +580,13 @@ $("#prevBtn").onclick = () => cur?.prev_id && (location.hash = `/exp/${cur.prev_
 $("#nextBtn").onclick = () => cur?.next_id && (location.hash = `/exp/${cur.next_id}`);
 document.addEventListener("keydown", (e) => {
   if ($("#detail").hidden || e.target.matches("input, select, textarea")) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (/^[0-5]$/.test(e.key) && cur && canEdit) { setRating(+e.key); return; }
-  if (e.key === "Escape") $("#closeBtn").click();
+  const v = { g: "good", j: "junk", u: "unsure" }[e.key.toLowerCase()];
+  if (v && cur && canEdit) { setVerdict(v); return; }
+  if (e.key.toLowerCase() === "t" && canEdit) { e.preventDefault(); $("#dTagIn").focus(); return; }
+  if (e.key === "Escape") { if (triage.on) stopTriage(); $("#closeBtn").click(); }
+  else if (triage.on && e.key === "ArrowRight" && cur) { triage.skipped.add(cur.id); triageNext(cur.id); }
   else if (e.key === "ArrowLeft") $("#prevBtn").click();
   else if (e.key === "ArrowRight") $("#nextBtn").click();
 });
@@ -586,24 +649,87 @@ function renderOrganize() {
   });
   const inIds = new Set(e.collections.map((c) => String(c.id)));
   $$("#dAddCol option").forEach((o) => o.hidden = inIds.has(o.value));
+  $$("#dVerdict button").forEach((b) => b.classList.toggle("on", b.dataset.v === e.verdict));
+  $("#dTags").innerHTML = (e.tags || []).map((t) =>
+    `<span class="chip tag">🏷 ${esc(t)}<button data-t="${esc(t)}" title="Remove this tag" class="edit-only">×</button></span>`).join("");
+  $$("#dTags button").forEach((b) => b.onclick = () => changeTags([], [b.dataset.t]));
   if (!noteDirty) $("#dNote").value = e.user_note || "";  // never overwrite unsaved typing
   const others = e.others || [];
   $("#dOthers").hidden = !others.length;
   $("#dOthers").innerHTML = others.length ? `<div class="muted small">Others</div>` + others.map((o) =>
-    `<div class="other"><b>${esc(o.user)}</b> <span class="st">${o.rating ? "★".repeat(o.rating) : ""}</span>` +
+    `<div class="other"><b>${esc(o.user)}</b> ${o.verdict ? VERDICT[o.verdict] : ""} <span class="st">${o.rating ? "★".repeat(o.rating) : ""}</span>` +
+    (o.tags.length ? ` ${o.tags.map((t) => `<a class="chip tag small" href="#/?tag=${encodeURIComponent(t)}">🏷 ${esc(t)}</a>`).join(" ")}` : "") +
     (o.note ? `<div class="other-note">${esc(o.note)}</div>` : "") + `</div>`).join("") : "";
-  $(".organize").hidden = !canEdit && !e.rating && !e.collections.length && !e.user_note && !others.length;
+  $(".organize").hidden = !canEdit && !e.rating && !e.verdict && !(e.tags || []).length && !e.collections.length && !e.user_note && !others.length;
   $("#dNote").hidden = !canEdit && !e.user_note;
   $("#dSaved").textContent = "";
 }
 async function afterOrganize(savedMsg = "Saved") {
   const id = cur.id;
-  Object.assign(cur, await api(`/api/exposures/${id}`).then((x) => ({ rating: x.rating, user_note: x.user_note, others: x.others, collections: x.collections })));
+  Object.assign(cur, await api(`/api/exposures/${id}`).then((x) => ({ rating: x.rating, user_note: x.user_note, verdict: x.verdict, tags: x.tags, others: x.others, collections: x.collections })));
   await loadCollections();
   renderOrganize();
   $("#dSaved").textContent = savedMsg;
   lastGalleryKey = null; // gallery shows ratings/collections; refresh it when we go back
 }
+async function setVerdict(v) {
+  if (!cur) return;
+  const id = cur.id, clear = v === cur.verdict;  // pressing the same one again clears it
+  await post(`/api/exposures/${id}/annotation`, { verdict: clear ? "" : v }, "PUT");
+  if (triage.on && !clear) return triageNext(id);
+  await afterOrganize(clear ? "Verdict cleared" : VERDICT[v]);
+}
+$$("#dVerdict button").forEach((b) => b.onclick = () => setVerdict(b.dataset.v));
+
+async function changeTags(add, remove) {
+  if (!cur) return;
+  const r = await post(`/api/exposures/${cur.id}/tags`, { add, remove }, "PUT");
+  cur.tags = r.tags;
+  renderOrganize();
+  $("#dSaved").textContent = add.length ? "Tag added" : "Tag removed";
+  lastGalleryKey = null;
+  loadTags();
+}
+$("#dTagIn").onkeydown = (ev) => {
+  if (ev.key === "Enter" && ev.target.value.trim()) {
+    ev.preventDefault();
+    changeTags([ev.target.value.trim()], []);
+    ev.target.value = "";
+  } else if (ev.key === "Escape") { ev.stopPropagation(); ev.target.blur(); }
+};
+$("#dTagIn").onchange = (ev) => {  // picked from the suggestion list
+  if (tagsData.some((t) => t.tag === ev.target.value)) { changeTags([ev.target.value], []); ev.target.value = ""; }
+};
+
+// ---------- triage: go through the photos I haven't judged yet, one at a time
+// Uses the gallery's current filters; "next" is simply the first photo still
+// without my verdict, so it never loses its place. Skipped photos are remembered.
+const triage = { on: false, params: null, skipped: new Set() };
+async function triageNext(doneId) {
+  const p = new URLSearchParams(triage.params);
+  p.set("verdict", "todo");
+  p.delete("sort");
+  const r = await api(apiQuery(p, 0).replace(/limit=\d+/, `limit=${triage.skipped.size + 2}`));
+  const next = r.items.find((x) => x.id !== doneId && !triage.skipped.has(x.id));
+  const left = r.total - (doneId && r.items.some((x) => x.id === doneId) ? 1 : 0);
+  if (!next) { stopTriage(); toast("All done: every photo here has your verdict."); return; }
+  $("#triageLeft").textContent = `${left} left`;
+  location.hash = `/exp/${next.id}`;
+}
+function startTriage() {
+  triage.on = true;
+  triage.params = new URLSearchParams(galleryHash.split("?")[1] || "");
+  triage.skipped.clear();
+  $("#triageBar").hidden = false;
+  triageNext(null);
+}
+function stopTriage() {
+  triage.on = false;
+  $("#triageBar").hidden = true;
+  lastGalleryKey = null;
+}
+$("#triageBtn").onclick = startTriage;
+
 async function setRating(n) {
   if (!cur) return;
   await post(`/api/exposures/${cur.id}/annotation`, { rating: n }, "PUT");
