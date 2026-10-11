@@ -189,9 +189,9 @@ with udb() as _c:
         _c.execute("INSERT INTO annotations (user, folder, prefix, rating, note, updated) "
                    "SELECT ?, folder, prefix, rating, note, updated FROM annotations_old", (ME,))
         _c.execute("DROP TABLE annotations_old")
+    _c.executescript(USER_SCHEMA)  # creates missing tables first (a new install has none)
     if "verdict" not in [r[1] for r in _c.execute("PRAGMA table_info(annotations)")]:
         _c.execute("ALTER TABLE annotations ADD COLUMN verdict TEXT")
-    _c.executescript(USER_SCHEMA)
 
 
 def db():
