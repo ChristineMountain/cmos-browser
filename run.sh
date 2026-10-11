@@ -58,7 +58,7 @@ case "${1:-}" in
     want=$(sha1sum environment.yml | cut -c1-40)
     if [[ -x $MAMBA && -d .env && "$(cat .env/.envhash 2>/dev/null)" != "$want" ]]; then
       echo "Updating Python packages…"
-      "$MAMBA" install -y -q -p .env -f environment.yml && echo "$want" > .env/.envhash
+      "$MAMBA" install -y -q -p "$PWD/.env" -f environment.yml && echo "$want" > .env/.envhash
     fi
     if running; then "$0" restart; fi
     ;;

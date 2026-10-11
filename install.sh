@@ -32,11 +32,12 @@ echo "ok"
 say "2/6  The app's own Python environment (a few minutes the first time)"
 mkdir -p "$DIR"
 cd "$DIR"
+DIR=$PWD   # absolute (micromamba needs that)
 [[ -f environment.yml ]] || curl -fsSL "$RAW/environment.yml" -o environment.yml
 if [[ ! -x .env/bin/python ]]; then
-  "$MAMBA" create -y -q -p .env -f environment.yml
+  "$MAMBA" create -y -q -p "$DIR/.env" -f environment.yml
 else
-  "$MAMBA" install -y -q -p .env -f environment.yml
+  "$MAMBA" install -y -q -p "$DIR/.env" -f environment.yml
 fi
 export PATH="$DIR/.env/bin:$PATH"
 echo "ok"
