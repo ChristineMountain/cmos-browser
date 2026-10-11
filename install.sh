@@ -56,9 +56,13 @@ echo "ok: $(git log -1 --format='%h %s')"
 say "4/6  Sharing ratings and notes (GitHub sign-in)"
 ME=""
 if ! gh auth status --hostname github.com > /dev/null 2>&1; then
-  echo "Sign in to GitHub: it shows a code, opens a page, you paste the code and approve."
-  echo "(No GitHub account? Make one at https://github.com/signup, or press Ctrl+C here to skip sharing.)"
-  BROWSER=firefox gh auth login --hostname github.com --git-protocol https --web || true
+  echo "Sharing your ratings and notes with the team needs a GitHub account (free: https://github.com/signup)."
+  echo "Without one the app works fully; your ratings just stay on your copy."
+  read -r -p "Sign in to GitHub now? [y/N] " answer < /dev/tty || answer=n
+  if [[ $answer == [yY]* ]]; then
+    echo "It shows a code and opens a page: paste the code there and approve."
+    BROWSER=firefox gh auth login --hostname github.com --git-protocol https --web || true
+  fi
 fi
 if gh auth status --hostname github.com > /dev/null 2>&1; then
   gh auth setup-git --hostname github.com
