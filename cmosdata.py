@@ -198,14 +198,75 @@ def fits_frame_count(path):
     return (os.path.getsize(path) - p_len) // e_len if e_len else None
 
 
+def _read_pack_header(f):
+    (n,) = struct.unpack(">I", f.read(4))
+    if n > 1 << 20:
+        raise ValueError("unexpected pack header length")
+    return json.loads(f.read(n)), 4 + n
+
+
 def read_pack_header(path):
     """The JSON header at the start of a .hpkcmos-pack file (4-byte big-endian length + JSON)."""
     with open_stream(path) as f:
-        head = f.read(4)
-        (n,) = struct.unpack(">I", head)
-        if n > 1 << 20:
-            raise ValueError("unexpected pack header length")
-        return json.loads(f.read(n))
+        return _read_pack_header(f)[0]
+
+
+# Each pack frame is a 1024-byte JSON block (space padded), then the pixels:
+# 16 bit: little-endian uint16; 12 bit: 8 extra bytes, then two pixels per
+# 3 bytes, most significant nibble first. Rows are those selected by the ROI
+# (one hex digit = 4 bits, one bit = 100 rows), 2560 pixels wide. The first 16
+# pixels of row 0 hold the camera's frame header (the FITS conversion zeroes them).
+# Checked pixel for pixel against FITS converted from the same captures.
+PACK_FRAME_META = 1024
+
+
+def _pack_layout(h):
+    bpp = h["bit_per_pixel"]
+    if bpp not in (12, 16):
+        raise ValueError(f"unsupported pack bit_per_pixel {bpp}")
+    npix = h["frame_size"] // 2  # frame_size counts 2 bytes per pixel even for 12-bit data
+    roi = (h.get("capture_config") or {}).get("roi")
+    rows = 100 * sum(bin(int(c, 16)).count("1") for c in roi) if roi else 0
+    nx = npix // rows if rows and npix % rows == 0 else 2560
+    ny = npix // nx
+    pix_bytes = npix * 2 if bpp == 16 else npix * 3 // 2 + 8
+    return bpp, ny, nx, PACK_FRAME_META + pix_bytes
+
+
+def pack_frame_count(path):
+    """Frames actually stored in an uncompressed pack file (None for .zst)."""
+    if path.endswith(".zst"):
+        return None
+    with open(path, "rb") as f:
+        h, start = _read_pack_header(f)
+    return (os.path.getsize(path) - start) // _pack_layout(h)[3]
+
+
+def stored_frame_count(path, fmt):
+    return fits_frame_count(path) if is_fits(fmt) else pack_frame_count(path)
+
+
+def read_pack_frame(path, frame=0):
+    """Return (data as 2-D uint16 array, frame metadata dict) for frame `frame` (0-based)."""
+    with open_stream(path) as f:
+        h, _ = _read_pack_header(f)
+        bpp, ny, nx, stride = _pack_layout(h)
+        _skip(f, frame * stride)
+        buf = f.read(stride)
+    if len(buf) < stride:
+        raise ValueError("truncated pack data")
+    meta = json.loads(buf[:PACK_FRAME_META].rstrip(b" \0") or b"{}")
+    pix = buf[PACK_FRAME_META:]
+    if bpp == 16:
+        a = np.frombuffer(pix, dtype="<u2").reshape(ny, nx).copy()
+    else:
+        b = np.frombuffer(pix, dtype=np.uint8, offset=8).reshape(-1, 3).astype(np.uint16)
+        a = np.empty((b.shape[0], 2), dtype=np.uint16)
+        a[:, 0] = (b[:, 0] << 4) | (b[:, 1] >> 4)
+        a[:, 1] = ((b[:, 1] & 0xF) << 8) | b[:, 2]
+        a = a.reshape(ny, nx)
+    a[0, :16] = 0  # camera frame header, blanked as in the FITS files
+    return a, meta
 
 
 def header_to_dict(h):
@@ -366,6 +427,11 @@ def read_fits_frame(path, frame=0):
     return a, h
 
 
+def read_frame(path, fmt, frame=0):
+    """Pixels of one frame from a FITS or raw pack file: (2-D array, header)."""
+    return read_fits_frame(path, frame) if is_fits(fmt) else read_pack_frame(path, frame)
+
+
 def bin_image(a, b):
     """Block-average by an integer factor b (edges cropped). Returns float32."""
     if b <= 1:
@@ -376,22 +442,38 @@ def bin_image(a, b):
     return (a.reshape(ny // b, b, nx // b, b).sum(axis=(1, 3), dtype=acc) / (b * b)).astype(np.float32)
 
 
-def mosaic(tiles, b):
-    """Arrange binned sensor tiles into one image.
+# Where each sensor sits on the sky, from the per-sensor WCS in the FITS headers
+# (identical on every night that has one; raw pack files have no WCS). Shown as
+# on the sky, north up and east left, like the CMOS Viewer: left to right
+# 0, 3, 1, 4, 2, 5. Sensors 0-2 have row 0 at the top and x increasing to the
+# right; sensors 3-5 are mounted rotated by 180 degrees. Neighbours are 2900
+# pixels apart centre to centre, so there is a 340-pixel gap between them.
+SKY_ORDER = [0, 3, 1, 4, 2, 5]
+ROTATED_180 = {3, 4, 5}
+SENSOR_GAP = 340
 
-    tiles: list of (sensor, binned array, ext header). Sensors are placed side by
-    side in sensor-number order (the per-sensor WCS headers are not precise
-    enough to give the true focal-plane layout). Gaps are filled with NaN.
-    Returns (image, [dict(sensor, x0, y0, w, h)]) in binned pixels.
+
+def mosaic(tiles, b):
+    """Arrange binned sensor tiles into one image, as they sit on the sky.
+
+    tiles: list of (sensor, binned array, ext header). Each array is in file
+    order (row 0 first). Sensors not in SKY_ORDER go on the right, unrotated.
+    Gaps are filled with NaN. Returns (image, [dict(sensor, x0, y0, w, h, bin,
+    rot180)]) in binned pixels, y measured from the top of the image.
     """
-    tiles = sorted(tiles, key=lambda t: t[0])
-    gap = 2
+    rank = {s: i for i, s in enumerate(SKY_ORDER)}
+    tiles = sorted(tiles, key=lambda t: (rank.get(t[0], len(rank)), t[0]))
+    gap = max(1, round(SENSOR_GAP / b)) if len(tiles) > 1 else 0
     h = max(t[1].shape[0] for t in tiles)
     w = sum(t[1].shape[1] for t in tiles) + gap * (len(tiles) - 1)
     img = np.full((h, w), np.nan, dtype=np.float32)
     layout, x = [], 0
     for s, a, _ in tiles:
-        img[: a.shape[0], x: x + a.shape[1]] = a
-        layout.append({"sensor": s, "x0": x, "y0": 0, "w": a.shape[1], "h": a.shape[0], "bin": b})
+        rot = s in ROTATED_180
+        if rot:
+            a = a[::-1, ::-1]
+        y0 = h - a.shape[0] if rot else 0  # partial ROI frames: keep row 0 on its own edge
+        img[y0: y0 + a.shape[0], x: x + a.shape[1]] = a
+        layout.append({"sensor": s, "x0": x, "y0": y0, "w": a.shape[1], "h": a.shape[0], "bin": b, "rot180": rot})
         x += a.shape[1] + gap
     return img, layout

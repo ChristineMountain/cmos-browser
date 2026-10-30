@@ -97,7 +97,7 @@ $("#themeBtn").onclick = () => {
 };
 $("#menuBtn").onclick = () => $("#sidebar").classList.toggle("open");
 
-let seenIndexed = null, viewerCfg = { url: "", root: "" };
+let seenIndexed = null, seenVersion = null, viewerCfg = { url: "", root: "" };
 async function loadStats() {
   try {
     const s = await api("/api/stats");
@@ -111,6 +111,9 @@ async function loadStats() {
     $("#stats").textContent = `${fmt.num(s.exposures)} exposures · ${s.nights} nights · ${fmt.bytes(s.bytes)}`;
     const upd = s.last_indexed ? new Date(s.last_indexed * 1000).toLocaleString() : "unknown";
     $("#stats").title = `Index last updated: ${upd}` + (s.auto_refresh_minutes ? `\nChecks for new data every ${s.auto_refresh_minutes} min` : "");
+    // The app updates itself from GitHub; offer a reload when the server runs newer code.
+    seenVersion ??= s.version;
+    if (s.version && s.version !== seenVersion) $("#newVersion").hidden = false;
     seenIndexed ??= s.exposures;
     if (s.exposures !== seenIndexed) $("#newData").hidden = false;
   } catch { /* stats are optional */ }
@@ -118,6 +121,7 @@ async function loadStats() {
 // The server re-scans the data on its own; tell the user when something new appears.
 setInterval(loadStats, 5 * 60 * 1000);
 $("#reloadBtn").onclick = () => location.reload();
+$("#updateReload").onclick = async () => { if (cur) await saveNote(); location.reload(); };
 
 // Link to the same exposure in the existing port-8003 viewer (pattern from config.toml).
 function viewerUrl(e) {
@@ -216,7 +220,7 @@ function renderSide() {
       .filter((n) => !term || n.night.includes(term) || fmt.night(n.night).toLowerCase().includes(term))
       .map((n) => `<li data-night="${n.night}" class="${params.get("night") === n.night ? "active" : ""}">
           <span class="name">${fmt.night(n.night)}</span><span class="n">${n.n}</span>
-          <span class="sub">${n.n_objects} object${n.n_objects === 1 ? "" : "s"} · ${n.n_fits ? `${n.n_fits} with preview · ` : ""}${fmt.bytes(n.bytes)}</span>
+          <span class="sub">${n.n_objects} object${n.n_objects === 1 ? "" : "s"} · ${n.n_fits ? `${n.n_fits} with FITS · ` : ""}${fmt.bytes(n.bytes)}</span>
           <span class="bar" style="width:${(100 * n.n / max).toFixed(1)}%"></span></li>`).join("");
     $$("li", ul).forEach((li) => li.onclick = () => {
       setParams({ night: params.get("night") === li.dataset.night ? null : li.dataset.night });
@@ -322,13 +326,10 @@ $("#moreBtn").onclick = () => {
 
 function cardHTML(e) {
   const ph = (title, text) => `<div class="thumb"><div class="ph"><b>${title}</b>${text}</div></div>`;
-  const thumb = e.n_fits > 0 && e.preview_shared === false
-    ? ph("NOT SHARED", "not readable by every account<br>on the server")
-    : e.n_fits > 0
-    ? `<div class="thumb loading"><img data-src="/api/exposures/${e.id}/thumb.webp?v=${e.signature}" alt=""></div>`
-    : !e.n_files ? ph("METADATA ONLY", "no image files in folder")
+  const thumb = !e.n_files ? ph("METADATA ONLY", "no image files in folder")
     : !e.n_readable ? ph("NO ACCESS", "files are not readable<br>for your account")
-    : ph("RAW", "hpkcmos-pack<br>no preview");
+    : e.preview_shared === false ? ph("NOT SHARED", "not readable by every account<br>on the server")
+    : `<div class="thumb loading"><img data-src="/api/exposures/${e.id}/thumb.webp?v=${e.signature}-sky" alt=""></div>`;
   const flags = [
     e.rating ? `<span class="st" title="Your rating">${"★".repeat(e.rating)}</span>` : "",
     e.has_note ? `<span title="Has your notes">📝</span>` : "",
@@ -585,6 +586,10 @@ document.addEventListener("keydown", (e) => {
   const v = { g: "good", j: "junk", u: "unsure" }[e.key.toLowerCase()];
   if (v && cur && canEdit) { setVerdict(v); return; }
   if (e.key.toLowerCase() === "t" && canEdit) { e.preventDefault(); $("#dTagIn").focus(); return; }
+  if (e.key === "[" || e.key === "]") { if (!$("#frameBar").hidden) $(e.key === "[" ? "#fPrev" : "#fNext").click(); return; }
+  if (e.key.toLowerCase() === "p") { if (!$("#frameBar").hidden) $("#fPlay").click(); return; }
+  if (e.key.toLowerCase() === "a") { if (px) applyPreset("auto"); return; }
+  if (e.key.toLowerCase() === "s") { if (cur && cur.preview_sensors.length) togglePanel(); return; }
   if (e.key === "Escape") { if (triage.on) stopTriage(); $("#closeBtn").click(); }
   else if (triage.on && e.key === "ArrowRight" && cur) { triage.skipped.add(cur.id); triageNext(cur.id); }
   else if (e.key === "ArrowLeft") $("#prevBtn").click();
@@ -768,8 +773,8 @@ function kvRows(rows) {
 }
 
 function renderSummary(e) {
-  const frames = e.fits_frames != null && e.fits_frames !== e.n_frames
-    ? `${fmt.num(e.n_frames)} captured · ${fmt.num(e.fits_frames)} stored in FITS` : fmt.num(e.n_frames);
+  const frames = e.stored_frames != null && e.stored_frames !== e.n_frames
+    ? `${fmt.num(e.n_frames)} captured · ${fmt.num(e.stored_frames)} stored in file` : fmt.num(e.n_frames);
   const rows = [
     ["§", "Observation"],
     ["Object", esc(e.object ?? "—")],
@@ -796,7 +801,7 @@ function renderSummary(e) {
     ["§", "Data"],
     ["Folder", `<span class="mono">${esc(e.folder)}</span>`],
     ["Exposure", `<span class="mono">${esc(e.prefix)}</span>`],
-    ["Sensors", `${e.n_sensors} (${e.n_fits} with FITS preview)`],
+    ["Sensors", `${e.n_sensors} (${e.preview_sensors.length} with preview, ${e.n_fits} in FITS)`],
     ["Formats", esc(e.formats)],
     ["Total size", fmt.bytes(e.total_bytes)],
   ];
@@ -881,8 +886,7 @@ const off = document.createElement("canvas"), offCtx = off.getContext("2d");
 const viewer = $("#viewer");
 let px = null;            // {w, h, raw, flat, layout, bin, sample}
 let view = { scale: 1, tx: 0, ty: 0, fitted: true };
-let levels = { lo: 0, hi: 1, preset: 99.5 };
-let pixToken = 0;
+let levels = { lo: 0, hi: 1, gamma: 1, preset: "auto" };
 
 const STRETCH = {
   linear: (t) => t,
@@ -901,7 +905,6 @@ const CMAPS = (() => {
   };
   return {
     gray: lerp([[0, 0, 0], [255, 255, 255]]),
-    inv: lerp([[255, 255, 255], [0, 0, 0]]),
     heat: lerp([[0, 0, 0], [120, 20, 10], [230, 90, 20], [255, 210, 80], [255, 255, 255]]),
     viridis: lerp([[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]]),
   };
@@ -909,29 +912,31 @@ const CMAPS = (() => {
 
 function setupViewer(e) {
   px = null;
+  stopPlay();
+  levels.preset = "auto"; // every exposure opens auto-stretched (gamma and invert are kept)
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  $("#vReadout").textContent = "";
+  $("#vReadout").hidden = true;
   const sensors = e.preview_sensors;
-  const controls = $$(".viewer-controls select, .viewer-controls input, .levels input, .levels button");
-  $(".viewer-controls").hidden = $(".levels").hidden = $(".zoom-btns").hidden = !sensors.length;
+  const controls = $$(".viewer-controls select, .viewer-controls input, .viewer-controls button, .stretch-panel input, .sp-btn, .frame-bar input, .frame-bar button");
+  $(".viewer-controls").hidden = $(".zoom-btns").hidden = $("#frameBar").hidden = !sensors.length;
+  $("#stretchPanel").hidden = !sensors.length || panelClosed;
+  showStats();
   if (!sensors.length) {
     controls.forEach((c) => c.disabled = true);
-    if (e.restricted && e.n_fits > 0 && e.files.some((f) => f.readable && !f.shared))
+    if (e.restricted && e.files.some((f) => f.readable && !f.shared))
       msg(`<b>Not shared</b><br>These files aren't readable by every account on the server,<br>so they're only available to the owner of this app.`);
     else if (!e.files.length) msg(`<b>Metadata only</b><br>The folder has a meta.json for this exposure but no image files.`);
     else if (!e.files.some((f) => f.readable)) msg(`<b>No read access</b><br>These files exist but are not readable for your account.<br>Ask the data owner to make them readable to see more.`);
-    else if (e.files.some((f) => f.readable && f.format.startsWith("fits"))) msg(`<b>No preview</b><br>The FITS files for this exposure could not be read.`);
-    else msg(`<b>Raw camera data</b><br>This exposure is stored only as <span class="mono">.hpkcmos-pack</span>, which can't be previewed here.<br>${viewerUrl(e) ? `Use <b>Open in viewer ↗</b> (top right) to see it in the port-8003 viewer.<br>` : ""}Metadata and downloads are available on the right.`);
+    else msg(`<b>No preview</b><br>The image files for this exposure could not be read.`);
     return;
   }
   controls.forEach((c) => c.disabled = false);
   $("#vSensor").innerHTML = (sensors.length > 1 ? `<option value="all">All ${sensors.length}</option>` : "") +
     sensors.map((s) => `<option value="${s}">Sensor ${s}</option>`).join("");
-  const maxFrame = (e.fits_frames ?? e.n_frames ?? 1) - 1;
-  $("#vFrame").max = Math.max(0, maxFrame);
-  $("#vFrame").value = 0;
-  $("#vFrame").title = `0 – ${Math.max(0, maxFrame)}`;
+  $("#vFrame").value = $("#vFrameR").value = 0;
+  frameStatus("");
   updateBinOptions();
+  updateFrameRange();
   view.fitted = true;
   loadPixels();
 }
@@ -942,45 +947,108 @@ function updateBinOptions() {
   const def = all ? 8 : 4;
   $("#vBin").innerHTML = opts.map((b) => `<option value="${b}" ${b === def ? "selected" : ""}>${b}×${b}</option>`).join("");
 }
-$("#vSensor").onchange = () => { updateBinOptions(); view.fitted = true; loadPixels(); };
+// Frames available for the chosen sensor(s): sensors can store different numbers.
+function updateFrameRange() {
+  const e = cur, by = e.stored_frames_by_sensor || {}, sel = $("#vSensor").value;
+  const counts = (sel === "all" ? e.preview_sensors : [+sel]).map((s) => by[s] ?? e.n_frames ?? 1);
+  const n = Math.max(1, Math.min(...counts)), max = n - 1;
+  $("#vFrame").max = $("#vFrameR").max = max;
+  if (+$("#vFrame").value > max) $("#vFrame").value = $("#vFrameR").value = max;
+  const partial = sel === "all" && Math.max(...counts) > n;
+  $("#vFrameMax").textContent = `of ${fmt.num(n)}${partial ? " (all sensors)" : ""}`;
+  $("#vFrameMax").title = partial ? "Some sensors stored more frames: pick one sensor to see them all." : "";
+  $("#frameBar").hidden = (e.n_frames ?? 1) <= 1 && max === 0;
+  $("#spShared").hidden = !(sel === "all" && e.preview_sensors.length > 1);
+}
+$("#vSensor").onchange = () => { updateBinOptions(); updateFrameRange(); view.fitted = true; loadPixels(); };
 $("#vBin").onchange = () => { view.fitted = true; loadPixels(); };
-$("#vFrame").onchange = () => {
-  const f = $("#vFrame");
-  f.value = Math.min(Math.max(0, Math.round(+f.value || 0)), +f.max);
+// ---- frames: drag the slider to scrub; only the latest position is fetched,
+// one request at a time, so dragging never piles work onto the server.
+function setFrame(n) {
+  const max = +$("#vFrameR").max;
+  n = Math.min(Math.max(0, Math.round(+n || 0)), max);
+  $("#vFrame").value = $("#vFrameR").value = n;
   loadPixels();
-};
+}
+$("#vFrameR").oninput = (e) => { stopPlay(); setFrame(e.target.value); };
+$("#vFrame").onchange = (e) => { stopPlay(); setFrame(e.target.value); };
+$("#fPrev").onclick = () => { stopPlay(); setFrame(+$("#vFrame").value - 1); };
+$("#fNext").onclick = () => { stopPlay(); setFrame(+$("#vFrame").value + 1); };
+$("#fPlay").onclick = () => playing ? stopPlay() : startPlay();
+function frameStatus(text, err = false) {
+  $("#vFrameStatus").textContent = text;
+  $("#vFrameStatus").classList.toggle("err", err);
+}
+
+let playing = false, playTimer = null;
+function startPlay() {
+  if (!px || +$("#vFrameR").max === 0) return;
+  playing = true;
+  $("#fPlay").textContent = "⏸";
+  if (!pix.busy) playStep();
+}
+function stopPlay() {
+  playing = false;
+  clearTimeout(playTimer);
+  $("#fPlay").textContent = "▶";
+}
+function playStep() {
+  if (!playing) return;
+  const max = +$("#vFrameR").max, n = +$("#vFrame").value;
+  playTimer = setTimeout(() => playing && setFrame(n >= max ? 0 : n + 1), 120);
+}
 
 function msg(html) { $("#vMsg").innerHTML = html ? `<div>${html}</div>` : ""; }
 
+const pix = { busy: false, again: false, shown: null };
 async function loadPixels() {
   if (!cur) return;
-  const token = ++pixToken;
-  const q = new URLSearchParams({ sensor: $("#vSensor").value, frame: $("#vFrame").value, bin: $("#vBin").value });
-  msg(`<span>Reading image… <span class="small">(${$("#vSensor").value === "all" ? "all sensors" : "1 sensor"}, binned ${$("#vBin").value}×${$("#vBin").value})</span></span>`);
-  let r;
+  if (pix.busy) { pix.again = true; return; }
+  pix.busy = true;
   try {
-    r = await fetch(`/api/exposures/${cur.id}/pixels?${q}`);
+    do { pix.again = false; await fetchPixels(); } while (pix.again);
+  } finally {
+    pix.busy = false;
+  }
+  if (playing) playStep();
+}
+
+async function fetchPixels() {
+  const id = cur.id, sensor = $("#vSensor").value, bin = $("#vBin").value, frame = $("#vFrame").value;
+  // Same image, another frame: keep showing the current one while the next loads.
+  const scrub = px && pix.shown === `${id}/${sensor}/${bin}`;
+  if (scrub) frameStatus("loading…");
+  else msg(`<span>Reading image… <span class="small">(${sensor === "all" ? "all sensors" : "1 sensor"}, binned ${bin}×${bin})</span></span>`);
+  let r, buf;
+  try {
+    r = await fetch(`/api/exposures/${id}/pixels?${new URLSearchParams({ sensor, frame, bin })}`);
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    buf = await r.arrayBuffer();
   } catch (err) {
-    if (token === pixToken) msg(`<span style="color:var(--bad)">${esc(err.message)}</span>`);
+    if (cur && cur.id === id && !pix.again) {
+      stopPlay();
+      if (scrub) frameStatus(err.message, true);
+      else msg(`<span style="color:var(--bad)">${esc(err.message)}</span>`);
+    }
     return;
   }
-  const buf = await r.arrayBuffer();
-  if (token !== pixToken) return;
+  if (!cur || cur.id !== id) return; // switched exposure meanwhile
   const w = +r.headers.get("X-Width"), h = +r.headers.get("X-Height");
   const offset = +r.headers.get("X-Offset"), scale = +r.headers.get("X-Scale");
   const codes = new Uint16Array(buf);
   const raw = new Float32Array(codes.length);
   for (let i = 0; i < codes.length; i++) raw[i] = codes[i] ? offset + (codes[i] - 1) / scale : NaN;
   px = { w, h, raw, flat: null, layout: JSON.parse(r.headers.get("X-Layout")), bin: +r.headers.get("X-Bin") };
+  pix.shown = `${id}/${sensor}/${bin}`;
   msg("");
-  prepareData();
+  frameStatus("");
+  prepareData(!scrub || $("#vAutoEach").checked); // scrubbing: keep levels unless asked
   if (view.fitted) fit();
 }
 
 function data() { return $("#vFlat").checked ? px.flat : px.raw; }
 
-function prepareData() {
+function prepareData(reauto = true) {
   if ($("#vFlat").checked && !px.flat) px.flat = flatten(px);
   const v = data();
   // Sorted sample of finite values: drives percentiles, the histogram and the sliders.
@@ -988,7 +1056,16 @@ function prepareData() {
   const s = [];
   for (let i = 0; i < v.length; i += step) if (v[i] === v[i]) s.push(v[i]);
   px.sample = Float32Array.from(s).sort();
-  if (levels.preset != null) applyPreset(levels.preset, false);
+  // Background level (Offset = median) and spread (MAD = median absolute
+  // deviation from it). Both ignore the few bright stars. With several sensors
+  // the sample is drawn from all of them, so they share one tone scale.
+  const med = pct(50), dev = new Float32Array(px.sample.length);
+  for (let i = 0; i < dev.length; i++) dev[i] = Math.abs(px.sample[i] - med);
+  dev.sort();
+  px.sky = med;
+  px.mad = dev.length ? dev[dev.length >> 1] : 0;
+  px.sigma = Math.max(px.mad, (pct(100) - pct(0)) * 1e-5, 1e-6); // unit for the slider scale
+  if (levels.preset != null && reauto) applyPreset(levels.preset, false);
   else { levels.lo = Math.max(levels.lo, pct(0) - 1); levels.hi = Math.min(levels.hi, pct(100) + 1); }
   syncLevelInputs();
   render();
@@ -1016,45 +1093,81 @@ function pct(p) {
   if (!s.length) return 0;
   return s[Math.min(s.length - 1, Math.max(0, Math.round(p / 100 * (s.length - 1))))];
 }
+// Auto stretch, as in the CMOS Viewer: Black = Offset − Factor × MAD,
+// White = Offset + Factor × MAD. Gamma is left as it is.
 function applyPreset(p, redraw = true) {
   levels.preset = p;
-  levels.lo = pct((100 - p) / 2);
-  levels.hi = pct(100 - (100 - p) / 2);
-  if (levels.hi <= levels.lo) levels.hi = levels.lo + 1;
-  $$(".presets .chip-btn").forEach((b) => b.classList.toggle("active", +b.dataset.p === p));
+  const f = factor();
+  levels.lo = px.sky - f * px.mad;
+  levels.hi = px.sky + f * px.mad;
+  if (levels.hi <= levels.lo) { levels.lo = pct(0); levels.hi = Math.max(pct(100), levels.lo + 1); } // flat image
+  showStats();
   if (redraw) { syncLevelInputs(); render(); }
 }
-$$(".presets .chip-btn").forEach((b) => b.onclick = () => px && applyPreset(+b.dataset.p));
-
-// Sliders move through the data's quantiles, so there is fine control where most pixels are.
-const SL = 1000;
-function valueToSlider(v) {
-  const s = px.sample;
-  let a = 0, b = s.length - 1;
-  while (a < b) { const m = (a + b) >> 1; if (s[m] < v) a = m + 1; else b = m; }
-  return Math.round(a / Math.max(1, s.length - 1) * SL);
+function factor() {
+  const f = +$("#vFactor").value;
+  return f > 0 ? f : 5;
 }
-const sliderToValue = (x) => pct(x / SL * 100);
+const f2 = (v) => v == null || !isFinite(v) ? "—" : (+v).toFixed(2);
+function showStats() {
+  const ok = !!px;
+  $("#stOffset").textContent = ok ? f2(px.sky) : "—";
+  $("#stMad").textContent = ok ? f2(px.mad) : "—";
+  $("#stRange").textContent = ok ? `${f2(px.sky - factor() * px.mad)} .. ${f2(px.sky + factor() * px.mad)}` : "—";
+}
+$("#vAutoBtn").onclick = () => px && applyPreset("auto");
+$("#vFactor").onchange = () => { if (!px) return; applyPreset("auto"); };
+$("#vResetBtn").onclick = () => {
+  $("#vFactor").value = 5;
+  $("#vInvert").checked = false;
+  $("#vStretch").value = "linear";
+  $("#vCmap").value = "gray";
+  levels.gamma = 1;
+  if (px) applyPreset("auto");
+};
+$("#vInvert").onchange = () => render();
+const clampGamma = (g) => Math.min(4, Math.max(0.1, Math.round(g * 100) / 100));
+
+// Black/white sliders are asinh-scaled around the sky level in units of its
+// noise: fine steps near the background, still reaching the brightest pixel.
+const SL = 1000;
+function sliderRange() {
+  const u = (v) => Math.asinh((v - px.sky) / px.sigma);
+  return [u(Math.min(pct(0), levels.lo)), u(Math.max(pct(100), levels.hi))];
+}
+function valueToSlider(v) {
+  const [a, b] = sliderRange();
+  return Math.round((Math.asinh((v - px.sky) / px.sigma) - a) / (b - a) * SL);
+}
+function sliderToValue(x) {
+  const [a, b] = sliderRange();
+  return px.sky + px.sigma * Math.sinh(a + x / SL * (b - a));
+}
+const gammaToSlider = (g) => Math.round(Math.log(g / 0.1) / Math.log(40) * SL);
+const sliderToGamma = (x) => clampGamma(0.1 * Math.pow(40, x / SL));
 function syncLevelInputs() {
   if (!px) return;
   $("#vMin").value = valueToSlider(levels.lo);
   $("#vMax").value = valueToSlider(levels.hi);
+  $("#vGamma").value = gammaToSlider(levels.gamma);
   const d = (v) => +v.toPrecision(6);
   $("#vMinN").value = d(levels.lo);
   $("#vMaxN").value = d(levels.hi);
+  $("#vGammaN").value = levels.gamma;
   drawHist();
 }
-function manualLevels(lo, hi) {
+function manualLevels(lo, hi, gamma = levels.gamma) {
   levels.preset = null;
-  $$(".presets .chip-btn").forEach((b) => b.classList.remove("active"));
-  levels.lo = lo; levels.hi = hi;
-  if (levels.hi <= levels.lo) levels.hi = levels.lo + 1e-3;
+  levels.lo = lo; levels.hi = hi; levels.gamma = clampGamma(gamma || 1); // lo == hi is allowed: a hard threshold
   scheduleRender();
 }
-$("#vMin").oninput = (e) => { manualLevels(sliderToValue(+e.target.value), levels.hi); $("#vMinN").value = +levels.lo.toPrecision(6); drawHist(); };
-$("#vMax").oninput = (e) => { manualLevels(levels.lo, sliderToValue(+e.target.value)); $("#vMaxN").value = +levels.hi.toPrecision(6); drawHist(); };
-$("#vMinN").onchange = (e) => { manualLevels(+e.target.value, levels.hi); syncLevelInputs(); };
-$("#vMaxN").onchange = (e) => { manualLevels(levels.lo, +e.target.value); syncLevelInputs(); };
+$("#vMin").oninput = (e) => { manualLevels(Math.min(sliderToValue(+e.target.value), levels.hi), levels.hi); $("#vMinN").value = +levels.lo.toPrecision(6); drawHist(); };
+$("#vMax").oninput = (e) => { manualLevels(levels.lo, Math.max(sliderToValue(+e.target.value), levels.lo)); $("#vMaxN").value = +levels.hi.toPrecision(6); drawHist(); };
+$("#vGamma").oninput = (e) => { manualLevels(levels.lo, levels.hi, sliderToGamma(+e.target.value)); $("#vGammaN").value = levels.gamma; };
+$("#vMinN").onchange = (e) => { if (e.target.value !== "") manualLevels(Math.min(+e.target.value, levels.hi), levels.hi); syncLevelInputs(); };
+$("#vMaxN").onchange = (e) => { if (e.target.value !== "") manualLevels(levels.lo, Math.max(+e.target.value, levels.lo)); syncLevelInputs(); };
+$("#vGammaN").onchange = (e) => { manualLevels(levels.lo, levels.hi, +e.target.value); syncLevelInputs(); };
+$("#vGamma").ondblclick = () => { manualLevels(levels.lo, levels.hi, 1); syncLevelInputs(); };
 $("#vStretch").onchange = () => render();
 $("#vCmap").onchange = () => render();
 
@@ -1073,8 +1186,15 @@ function render() {
   if (!imgData) imgData = offCtx.createImageData(w, h);
   const out = imgData.data, lut = CMAPS[$("#vCmap").value], f = STRETCH[$("#vStretch").value];
   const N = 4096, tt = new Uint16Array(N + 1);
-  for (let i = 0; i <= N; i++) tt[i] = Math.round(Math.min(1, Math.max(0, f(i / N))) * 255) * 3;
-  const lo = levels.lo, inv = N / (levels.hi - levels.lo);
+  // normalized = clamp((pixel − black) / (white − black), 0, 1)
+  // display = stretch(normalized) ^ (1 / gamma)      (gamma 1 + Linear = linear)
+  // Invert flips the result. black == white gives a hard threshold.
+  const ig = 1 / levels.gamma, invert = $("#vInvert").checked;
+  for (let i = 0; i <= N; i++) {
+    const d = Math.pow(Math.min(1, Math.max(0, f(i / N))), ig);
+    tt[i] = Math.round((invert ? 1 - d : d) * 255) * 3;
+  }
+  const lo = levels.lo, inv = N / Math.max(levels.hi - levels.lo, 0);
   for (let i = 0, o = 0; i < v.length; i++, o += 4) {
     const x = v[i];
     if (x !== x) { out[o] = out[o + 1] = out[o + 2] = 22; out[o + 3] = 255; continue; }
@@ -1133,6 +1253,7 @@ function zoomAt(factor, mx, my) {
   draw();
 }
 viewer.addEventListener("wheel", (e) => {
+  if (e.target.closest(".stretch-panel")) return;
   e.preventDefault();
   const r = viewer.getBoundingClientRect();
   zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
@@ -1140,11 +1261,15 @@ viewer.addEventListener("wheel", (e) => {
 $("#zoomIn").onclick = () => zoomAt(1.5, viewer.clientWidth / 2, viewer.clientHeight / 2);
 $("#zoomOut").onclick = () => zoomAt(1 / 1.5, viewer.clientWidth / 2, viewer.clientHeight / 2);
 $("#zoomFit").onclick = fit;
-viewer.addEventListener("dblclick", fit);
+viewer.addEventListener("dblclick", (e) => { if (!e.target.closest(".stretch-panel")) fit(); });
+$("#zoom1").onclick = () => {
+  const cw = viewer.clientWidth, ch = viewer.clientHeight, s = 1 / (window.devicePixelRatio || 1);
+  zoomAt(s / view.scale, cw / 2, ch / 2);
+};
 
 let drag = null;
 viewer.addEventListener("pointerdown", (e) => {
-  if (e.target.closest("button")) return;
+  if (e.target.closest("button, .stretch-panel")) return;
   drag = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty };
   viewer.setPointerCapture(e.pointerId);
   viewer.classList.add("dragging");
@@ -1158,20 +1283,26 @@ viewer.addEventListener("pointermove", (e) => {
     view.fitted = false;
     draw();
   }
+  if (e.target.closest(".stretch-panel")) { $("#vReadout").hidden = true; return; }
   readout(e.clientX - r.left, e.clientY - r.top);
 });
-viewer.addEventListener("pointerleave", () => $("#vReadout").textContent = "");
+viewer.addEventListener("pointerleave", () => $("#vReadout").hidden = true);
 
 function readout(mx, my) {
   if (!px) return;
   const ix = Math.floor((mx - view.tx) / view.scale), iy = Math.floor((my - view.ty) / view.scale);
   const t = px.layout.find((t) => ix >= t.x0 && ix < t.x0 + t.w && iy >= t.y0 && iy < t.y0 + t.h);
-  if (!t) { $("#vReadout").textContent = ""; return; }
+  if (!t) { $("#vReadout").hidden = true; return; }
   const v = data()[iy * px.w + ix];
-  // FITS pixel coordinates (1-based, y measured from the bottom) of the binned block's corner
-  const fx = (ix - t.x0) * px.bin + 1, fy = (t.y0 + t.h - 1 - iy) * px.bin + 1;
-  const b = px.bin > 1 ? ` (mean of ${px.bin}×${px.bin})` : "";
-  $("#vReadout").textContent = `S${t.sensor}  x ${fx}  y ${fy}   ${v === v ? v.toFixed(1) : "—"}${$("#vFlat").checked ? " flat" : ""}${b}`;
+  // Full-resolution pixel of the binned block's corner: 0-based, x along the row,
+  // y = row number in the file. Sensors 3-5 are shown rotated by 180°.
+  const dx = ix - t.x0, dy = iy - t.y0;
+  const fx = (t.rot180 ? t.w - 1 - dx : dx) * px.bin, fy = (t.rot180 ? t.h - 1 - dy : dy) * px.bin;
+  $("#piSensor").textContent = t.sensor;
+  $("#piPixel").textContent = `(${fx}, ${fy})`;
+  $("#piValue").textContent = v === v ? v.toFixed(2) : "—";
+  $("#piNote").textContent = [px.bin > 1 ? `mean of ${px.bin}×${px.bin}` : "", $("#vFlat").checked ? "column-flattened" : ""].filter(Boolean).join(" · ");
+  $("#vReadout").hidden = false;
 }
 
 new ResizeObserver(() => { if (view.fitted) fit(); else draw(); drawHist(); }).observe(viewer);
@@ -1179,30 +1310,79 @@ new ResizeObserver(() => { if (view.fitted) fit(); else draw(); drawHist(); }).o
 function drawHist() {
   const c = $("#hist"), g = c.getContext("2d");
   const dpr = window.devicePixelRatio || 1;
-  c.width = Math.max(1, Math.round(c.clientWidth * dpr)); c.height = Math.round(56 * dpr);
+  const H = c.clientHeight || 44;
+  c.width = Math.max(1, Math.round(c.clientWidth * dpr)); c.height = Math.round(H * dpr);
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const W = c.clientWidth, H = 56;
+  const W = c.clientWidth;
   g.clearRect(0, 0, W, H);
   if (!px || !px.sample.length) return;
-  // Window around the current levels so the interesting part fills the plot.
-  const span = levels.hi - levels.lo;
-  const a = Math.max(pct(0), levels.lo - span * 0.6), b = Math.min(pct(100), levels.hi + span * 0.6);
+  // Window around the current levels so the interesting part fills the plot
+  // (held still while a marker is being dragged).
+  const span = Math.max(levels.hi - levels.lo, px.sigma * 4); // never collapse when black == white
+  const [a, b] = histDrag ? histDrag.win : [Math.max(pct(0), levels.lo - span * 0.6), Math.min(pct(100), levels.hi + span * 0.6)];
+  histWin = [a, b];
   const NB = 160, counts = new Float64Array(NB), s = px.sample;
   for (let i = 0; i < s.length; i++) { const k = Math.floor((s[i] - a) / (b - a) * NB); if (k >= 0 && k < NB) counts[k]++; }
   const mx = Math.log1p(Math.max(...counts));
-  const css = getComputedStyle(document.documentElement);
   const xOf = (v) => (v - a) / (b - a) * W;
-  g.fillStyle = css.getPropertyValue("--accent").trim() + "22";
+  g.fillStyle = "rgba(65,201,240,.16)";
   g.fillRect(xOf(levels.lo), 0, xOf(levels.hi) - xOf(levels.lo), H);
-  g.fillStyle = css.getPropertyValue("--muted").trim();
+  g.fillStyle = "#9a9a9a";
   for (let i = 0; i < NB; i++) {
     const hh = counts[i] ? Math.log1p(counts[i]) / mx * (H - 4) : 0;
     g.fillRect(i / NB * W, H - hh, W / NB + 0.5, hh);
   }
-  g.fillStyle = css.getPropertyValue("--accent").trim();
+  g.fillStyle = "#41c9f0";
   g.fillRect(xOf(levels.lo) - 1, 0, 2, H);
   g.fillRect(xOf(levels.hi) - 1, 0, 2, H);
 }
+
+// ---- the floating stretch panel: close with ×, reopen with the toolbar button
+// or S; drag it by its title bar.
+let panelClosed = false;
+function togglePanel(open = $("#stretchPanel").hidden) {
+  panelClosed = !open;
+  $("#stretchPanel").hidden = !open;
+  if (open) drawHist();
+}
+$("#spClose").onclick = () => togglePanel(false);
+$("#vPanelBtn").onclick = () => togglePanel();
+$("#spTitle").addEventListener("pointerdown", (e) => {
+  if (e.target.closest("button")) return;
+  const pnl = $("#stretchPanel"), vr = viewer.getBoundingClientRect(), pr = pnl.getBoundingClientRect();
+  const start = { x: e.clientX, y: e.clientY, l: pr.left - vr.left, t: pr.top - vr.top };
+  $("#spTitle").setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    const l = Math.min(Math.max(0, start.l + ev.clientX - start.x), vr.width - pr.width);
+    const t = Math.min(Math.max(0, start.t + ev.clientY - start.y), vr.height - 30);
+    Object.assign(pnl.style, { left: `${l}px`, top: `${t}px`, right: "auto" });
+  };
+  const up = () => { $("#spTitle").removeEventListener("pointermove", move); $("#spTitle").removeEventListener("pointerup", up); };
+  $("#spTitle").addEventListener("pointermove", move);
+  $("#spTitle").addEventListener("pointerup", up);
+});
+
+let histWin = [0, 1], histDrag = null;
+function histValue(e) {
+  const r = $("#hist").getBoundingClientRect(), [a, b] = histDrag ? histDrag.win : histWin;
+  return a + (e.clientX - r.left) / r.width * (b - a);
+}
+$("#hist").addEventListener("pointerdown", (e) => {
+  if (!px) return;
+  const v = histValue(e);
+  histDrag = { which: Math.abs(v - levels.lo) <= Math.abs(v - levels.hi) ? "lo" : "hi", win: histWin.slice() };
+  $("#hist").setPointerCapture(e.pointerId);
+  histMove(e);
+});
+function histMove(e) {
+  if (!histDrag) return;
+  const v = histValue(e);
+  if (histDrag.which === "lo") manualLevels(Math.min(v, levels.hi), levels.hi);
+  else manualLevels(levels.lo, Math.max(v, levels.lo));
+  syncLevelInputs();
+}
+$("#hist").addEventListener("pointermove", histMove);
+$("#hist").addEventListener("pointerup", () => { histDrag = null; drawHist(); });
 
 // ------------------------------------------------------------------ sharing ratings (GitHub)
 function renderSync(s) {

@@ -96,6 +96,39 @@ every photo someone marked Junk: who marked it (and anyone who disagreed), and
 the full paths of its files. Hand it to whoever owns the data to review and
 delete. Disagreements are counted at the top so they get checked first.
 
+## Looking at images
+
+- **Frames:** drag the slider under the image to scrub through frames (only
+  the position you stop on is read, so dragging is safe). `‹` `›` or `[` `]` step
+  one frame. ▶ or `P` plays the frames in a loop.
+- **Stretch controls** float over the image (drag them by the title bar, close
+  with ×, bring back with the *Stretch controls* button or `S`).
+  - **Apply auto stretch** (or `A`) works like the CMOS Viewer:
+    Black = Offset − Factor × MAD, White = Offset + Factor × MAD, where Offset is
+    the median pixel value and MAD the median absolute deviation from it. The
+    Factor starts at 5; changing it re-applies the auto stretch. Every
+    exposure opens auto-stretched.
+  - **Black / White / Gamma**: slider or typed value. The display is
+    `(clamp((pixel − black) / (white − black), 0, 1)) ^ (1 / gamma)`, so gamma 1
+    is linear and gamma above 1 brightens mid-tones. You can also drag the two
+    markers on the histogram. Black and white can be equal (a hard threshold).
+  - **Invert** swaps black and white. **Reset** returns to the defaults (auto
+    stretch with Factor 5, gamma 1, not inverted, linear, gray).
+  - **Re-stretch each frame**: on, the auto stretch is recomputed for every
+    frame. Off, the levels stay fixed while scrubbing, so brightness changes
+    between frames are visible.
+  - With several sensors, **all sensors share one tone scale**, computed from
+    all of them together, so their brightness can be compared.
+- **Sensor layout**: all sensors are shown as they sit on the sky, like the
+  CMOS Viewer: left to right 0, 3, 1, 4, 2, 5, with sensors 3–5 rotated by 180°
+  and the real gaps between sensors. This comes from the per-sensor WCS in the
+  FITS headers, which is the same on every night, so raw files use it too.
+- **Pixel inspector** (lower right) shows the sensor, the pixel (0-based x and
+  file row y of the full-resolution pixel) and the value under the cursor. When
+  binned, the value is the mean of the bin.
+- **Zoom**: mouse wheel, drag to pan, ⤢ or double-click to fit, 1:1 for one
+  image pixel per screen pixel.
+
 ## Ratings, notes and collections
 
 - **Verdicts, tags, ratings and notes are yours**, saved under your GitHub
@@ -184,7 +217,7 @@ Every exposure has an **Open in viewer ↗** button (top right of its page, and 
 *Viewer ↗* link on each gallery card and in the *Files* tab). It opens that exact
 exposure in the existing image viewer in a new tab, for example
 `http://172.18.0.1:8003/viewer/?ct=…&dir=slow%2F20260131&screen=viewer&path=slow%2F20260131%2Fobject00060`.
-This is useful for raw `.hpkcmos-pack` exposures, which this app can't preview.
+This viewer can also do things this app doesn't, such as astrometry and catalogs.
 The link pattern is `viewer_url` / `viewer_root` in `config.toml`. If the viewer's
 address changes, edit it there and restart (`./run.sh restart`). The viewer runs on the Docker host, outside everyone's sessions. The links use
 `172.18.0.1:8003` (the host's address on the internal network), which works
@@ -264,14 +297,16 @@ exposures from the app.
   don't load the server. Recent previews are kept in memory only (at most 64 MB).
 - The server runs at `nice 10` with at most two image reads at a time. Late
   frames in compressed `.fits.zst` files are refused, because they would need
-  long decompression.
+  long decompression (both `.fits.zst` and `.hpkcmos-pack.zst`).
 
 ## Notes about the data
 
 - An *exposure* is `objectNNNNN_meta.json` plus up to 6 sensor files
   `objectNNNNN_0 … _5` in FITS, `.fits.zst`, or raw `.hpkcmos-pack(.zst)`.
-- **Raw `.hpkcmos-pack` files have no image preview** in this version. Their
-  metadata is indexed and they can be downloaded.
+- **Raw `.hpkcmos-pack` files are previewed** just like FITS (FITS is used when
+  both exist). The decoder (`read_pack_frame` in `cmosdata.py`) was checked pixel
+  for pixel against FITS converted from the same captures. Sensors can store
+  different numbers of frames; the frame slider follows the selected sensor.
 - **Exposure time** comes from the FITS `EXPTIME` when available. Otherwise it is
   `NEXP × line time` (mode 10: 10 µs, mode 12: 33.3 µs), which matches `EXPTIME`
   exactly in the files checked. 2025 files used an older header in which

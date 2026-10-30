@@ -218,15 +218,19 @@ def get_files(eid):
     return rows("SELECT * FROM files WHERE exposure_id=? ORDER BY sensor, format", (eid,))
 
 
+PREVIEW_RANK = {"fits": 0, "fits.zst": 1, "pack": 2, "pack.zst": 3}  # fastest to read first
+
+
 def preview_files(eid, request=None):
-    """One readable FITS file per sensor (plain FITS preferred over .zst).
+    """One readable image file per sensor: FITS if there is one, else raw pack
+    (uncompressed preferred over .zst).
 
     For a restricted visitor, an exposure only has previews if all of them are
     shared (a partial mosaic would be confusing)."""
     best = {}
     for f in get_files(eid):
-        if f["readable"] and cd.is_fits(f["format"]):
-            if f["sensor"] not in best or (best[f["sensor"]]["format"] == "fits.zst" and f["format"] == "fits"):
+        if f["readable"] and f["format"] in PREVIEW_RANK:
+            if f["sensor"] not in best or PREVIEW_RANK[f["format"]] < PREVIEW_RANK[best[f["sensor"]]["format"]]:
                 best[f["sensor"]] = f
     out = [best[s] for s in sorted(best)]
     if out and restricted(request) and not all(world_readable(f["path"]) for f in out):
@@ -242,6 +246,28 @@ def index():
 
 
 # ------------------------------------------------------------------ listing API
+
+def code_version():
+    """The git commit this server was started from (None outside a git checkout)."""
+    try:
+        git = os.path.join(cd.PROJECT_DIR, ".git")
+        with open(os.path.join(git, "HEAD")) as f:
+            head = f.read().strip()
+        if not head.startswith("ref: "):
+            return head
+        ref = head[5:]
+        try:
+            with open(os.path.join(git, ref)) as f:
+                return f.read().strip()
+        except FileNotFoundError:
+            with open(os.path.join(git, "packed-refs")) as f:
+                return next((l.split()[0] for l in f if l.rstrip().endswith(" " + ref)), None)
+    except OSError:
+        return None
+
+
+VERSION = code_version()
+
 
 @app.get("/api/stats")
 def stats(request: Request):
@@ -264,6 +290,7 @@ def stats(request: Request):
     r["can_edit"] = can_edit(request)
     r["user"] = current_user(request)
     r["sync"] = sync.status
+    r["version"] = VERSION
     return r
 
 
@@ -418,7 +445,7 @@ def exposures(
         it["verdicts"] = {v: vs.count(v) for v in VERDICTS if v in vs}
     if restricted(request):
         for it in items:
-            it["preview_shared"] = bool(it["n_fits"]) and bool(preview_files(it["id"], request))
+            it["preview_shared"] = bool(preview_files(it["id"], request))
     return {"total": total, "items": items}
 
 
@@ -448,12 +475,16 @@ def exposure(eid: int, request: Request):
     e["restricted"] = restricted(request)
     pf = preview_files(eid, request)
     e["preview_sensors"] = [f["sensor"] for f in pf]
-    e["fits_frames"] = None  # frames actually stored in the FITS files (may be < n_frames)
-    if pf:
+    # Frames actually stored in each previewed file (may be < n_frames, and differ
+    # between sensors); None when it can't be known cheaply (.zst).
+    e["stored_frames_by_sensor"] = {}
+    for f in pf:
         try:
-            e["fits_frames"] = cd.fits_frame_count(pf[0]["path"])
+            e["stored_frames_by_sensor"][f["sensor"]] = cd.stored_frame_count(f["path"], f["format"])
         except Exception:
-            pass
+            e["stored_frames_by_sensor"][f["sensor"]] = None
+    known = [n for n in e["stored_frames_by_sensor"].values() if n is not None]
+    e["stored_frames"] = max(known) if known else None
     with db() as con:  # neighbours within the same folder, for prev/next
         prev = con.execute("SELECT id FROM exposures WHERE folder=? AND prefix<? ORDER BY prefix DESC LIMIT 1",
                            (e["folder"], e["prefix"])).fetchone()
@@ -516,7 +547,7 @@ def download(fid: int, request: Request):
 # ------------------------------------------------------------------ images
 
 def load_sensor(f, frame, b):
-    a, h = cd.read_fits_frame(f["path"], frame)
+    a, h = cd.read_frame(f["path"], f["format"], frame)
     return cd.bin_image(a, b), h
 
 
@@ -539,7 +570,7 @@ class ThumbCache:
         self.lock = threading.Lock()
 
     def path(self, e):
-        return os.path.join(self.folder, f"{e['id']}_{e['signature']}.webp")
+        return os.path.join(self.folder, f"{e['id']}_{e['signature']}_sky.webp")  # _sky: sky layout
 
     def get(self, e):
         p = self.path(e)
@@ -592,7 +623,7 @@ def thumb(eid: int, request: Request):
     if data is None:
         files = preview_files(eid)
         if not files:
-            raise HTTPException(404, "no FITS files to preview")
+            raise HTTPException(404, "no image files to preview")
         with HEAVY:
             try:
                 tiles = [(f["sensor"], *load_sensor(f, 0, 16)) for f in files]
@@ -602,7 +633,7 @@ def thumb(eid: int, request: Request):
         tiles = [(s, a - np.median(a, axis=0, keepdims=True), h) for s, a, h in tiles]
         img, _ = cd.mosaic(tiles, 16)
         buf = io.BytesIO()
-        Image.fromarray(stretch_u8(img)[::-1]).save(buf, "WEBP", quality=75, method=4)  # FITS y axis points up
+        Image.fromarray(stretch_u8(img)).save(buf, "WEBP", quality=75, method=4)
         data = buf.getvalue()
         THUMBS_CACHE.put(e, data)
     return Response(data, media_type="image/webp", headers=headers)
@@ -623,8 +654,8 @@ _PIX_LOCK = threading.Lock()
 def pixels(eid: int, request: Request, sensor: str = "all", frame: int = Query(0, ge=0), bin: int | None = Query(None, ge=1, le=32)):
     """Binned pixel data for the in-browser viewer.
 
-    Body: little-endian uint16, row-major, top row first (already flipped so
-    north/up is at the top as in DS9). Code 0 = no data (gap); otherwise
+    Body: little-endian uint16, row-major, top row first, sensors arranged as
+    on the sky (see cd.mosaic). Code 0 = no data (gap); otherwise
     value = offset + (code - 1) / scale. Shape and layout are in the X-* headers.
     """
     e = get_exposure(eid)
@@ -632,7 +663,7 @@ def pixels(eid: int, request: Request, sensor: str = "all", frame: int = Query(0
     if sensor != "all":
         files = [f for f in files if str(f["sensor"]) == sensor]
     if not files:
-        raise HTTPException(404, "no FITS data for this sensor")
+        raise HTTPException(404, "no image data for this sensor")
     b = bin or (8 if sensor == "all" else 4)
     nframes = e["n_frames"] or 1
     if frame >= nframes:
@@ -645,7 +676,7 @@ def pixels(eid: int, request: Request, sensor: str = "all", frame: int = Query(0
             return Response(body, media_type="application/octet-stream", headers=hdr)
     # Compressed files must be decompressed from the start up to the frame:
     # keep that bounded so one click can't tie up the shared server.
-    n_zst = sum(f["format"] == "fits.zst" for f in files)
+    n_zst = sum(f["format"].endswith(".zst") for f in files)
     if n_zst and (frame + 1) * n_zst > 60:
         raise HTTPException(400, f"frame {frame} of compressed (.zst) data is too slow to preview here; "
                                  "pick a single sensor or an earlier frame, or download the file")
@@ -657,14 +688,11 @@ def pixels(eid: int, request: Request, sensor: str = "all", frame: int = Query(0
             tiles = [(f["sensor"], *load_sensor(f, frame, b)) for f in files]
         except ValueError as ex:
             if "truncated" in str(ex):
-                raise HTTPException(404, f"frame {frame} is not stored in this FITS file")
+                raise HTTPException(404, f"frame {frame} is not stored in this file")
             raise HTTPException(500, f"cannot read image: {ex}")
         except Exception as ex:
             raise HTTPException(500, f"cannot read image: {ex}")
     img, layout = cd.mosaic(tiles, b)
-    img = img[::-1]
-    for t in layout:  # y is now measured from the top
-        t["y0"] = img.shape[0] - t["y0"] - t["h"]
     finite = np.isfinite(img)
     lo, hi = (float(img[finite].min()), float(img[finite].max())) if finite.any() else (0.0, 1.0)
     scale = min(64.0, 65534.0 / max(hi - lo, 1e-6))

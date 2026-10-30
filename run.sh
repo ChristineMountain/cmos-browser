@@ -6,7 +6,7 @@
 #   ./run.sh status    is it running? which port?
 #   ./run.sh index [args]   update the index (e.g. ./run.sh index --only 20260915)
 #   ./run.sh editlink  print your private link that unlocks editing in a browser
-#   ./run.sh watchdog  keep the server up (restarts it if down); started automatically at desktop login
+#   ./run.sh watchdog  keep the server up (restarts it if down) and up to date (checks GitHub every 5 min); started automatically at desktop login
 #   ./run.sh update    get the latest version from GitHub (also done by 'open' and at login)
 #   ./run.sh open      update, start, and open the app in Firefox (the desktop icon runs this)
 set -euo pipefail
@@ -25,7 +25,8 @@ case "${1:-}" in
     if running; then echo "Already running (pid $(cat $PIDFILE)) on port $PORT"; exit 0; fi
     if ss -ltn 2>/dev/null | grep -q ":$PORT "; then echo "Port $PORT is in use by another program. Change 'port' in config.toml."; exit 1; fi
     # Low CPU (nice 10) and best-effort lowest disk priority: be kind to other users.
-    nohup nice -n 10 ionice -c2 -n7 $PY app.py >> server.log 2>&1 &
+    # 9>&-: the server must not inherit the watchdog's lock, or a new watchdog could never start.
+    nohup nice -n 10 ionice -c2 -n7 $PY app.py >> server.log 2>&1 9>&- &
     echo $! > $PIDFILE
     for _ in $(seq 20); do curl -fs "http://127.0.0.1:$PORT/api/stats" >/dev/null 2>&1 && break; sleep 0.5; done
     if running; then echo "Started (pid $(cat $PIDFILE)): http://localhost:$PORT"; else echo "Failed to start; see server.log"; exit 1; fi
@@ -71,11 +72,25 @@ case "${1:-}" in
     ;;
   watchdog)
     # Single instance only; checks every 60 s and restarts after 3 failed checks in a row.
+    # Every 5 minutes it also gets the latest version from GitHub (update restarts the
+    # server when there is one; open pages then offer to reload), and re-runs itself
+    # so a newer watchdog takes over too.
     exec 9> watchdog.lock
     flock -n 9 || { echo "Watchdog already running"; exit 0; }
     "$0" update >> watchdog.log 2>&1 || true
     fails=3
+    ticks=0
     while true; do
+      ticks=$((ticks+1))
+      if (( ticks % 5 == 0 )) && [[ -d .git ]]; then
+        before=$(git rev-parse HEAD 2>/dev/null || true)
+        out=$("$0" update 2>&1 || true)
+        if [[ $(git rev-parse HEAD 2>/dev/null || true) != "$before" ]]; then
+          echo "$(date '+%F %T') $out" >> watchdog.log
+          exec 9>&-
+          exec "$0" watchdog
+        fi
+      fi
       if curl -fs -m 10 "http://127.0.0.1:$PORT/api/stats" >/dev/null 2>&1; then fails=0
       else fails=$((fails+1)); fi
       if (( fails >= 3 )); then
