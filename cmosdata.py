@@ -46,6 +46,10 @@ def load_config():
     if os.path.exists(local):
         with open(local, "rb") as f:
             cfg.update(tomllib.load(f))
+    # data_root may list several places (old servers: /data, new server: /storage/hdd/cmos);
+    # the first one that exists on this machine is used.
+    roots = cfg["data_root"] if isinstance(cfg["data_root"], list) else [cfg["data_root"]]
+    cfg["data_root"] = next((r for r in roots if os.path.isdir(r)), roots[0])
     cfg.setdefault("user_db", "userdata.sqlite")
     cfg.setdefault("auto_refresh_minutes", 15)
     cfg.setdefault("viewer_url", "")

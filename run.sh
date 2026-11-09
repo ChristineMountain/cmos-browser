@@ -15,7 +15,9 @@ cd "$(dirname "$0")"
 if [[ -x .env/bin/python ]]; then PY=.env/bin/python; export PATH="$PWD/.env/bin:$PATH"; else PY=.venv/bin/python; fi
 MAMBA="$HOME/.local/bin/micromamba"
 PIDFILE=server.pid
-PORT=$(sed -nE 's/^port *= *([0-9]+).*/\1/p' config.toml)
+# config.local.toml (personal) overrides config.toml.
+PORT=$(sed -nE 's/^port *= *([0-9]+).*/\1/p' config.local.toml 2>/dev/null | tail -1)
+[[ -n $PORT ]] || PORT=$(sed -nE 's/^port *= *([0-9]+).*/\1/p' config.toml)
 
 # Also check the pid really is our app.py: after a container restart the old pid may belong to something else.
 running() { [[ -f $PIDFILE ]] && kill -0 "$(cat $PIDFILE)" 2>/dev/null && grep -qa app.py "/proc/$(cat $PIDFILE)/cmdline" 2>/dev/null; }

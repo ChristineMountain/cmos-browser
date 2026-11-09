@@ -16,8 +16,8 @@ RAW=https://raw.githubusercontent.com/ChristineMountain/cmos-browser/main
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[33m%s\033[0m\n' "$*"; }
 
-if [[ ! -d /data ]]; then
-  warn "/data isn't here. Run this in your remote desktop on the server, where the CMOS data is."
+if [[ ! -d /data && ! -d /storage/hdd/cmos ]]; then
+  warn "The CMOS data (/data or /storage/hdd/cmos) isn't here. Run this in your remote desktop on the server, where the data is."
   exit 1
 fi
 
@@ -87,7 +87,14 @@ if gh auth status --hostname github.com > /dev/null 2>&1; then
     git -C ratings-data config user.email "$ME@users.noreply.github.com"
   fi
 fi
-[[ -n $ME ]] && printf '# Personal settings for this copy (not shared, not in git).\nme = "%s"\n' "$ME" > config.local.toml
+# On a shared server (everyone on one machine) each copy needs its own port.
+PORT_LINE=$(grep -E '^port *=' config.local.toml 2>/dev/null || true)
+if [[ -z $PORT_LINE && -d /storage/hdd/cmos ]]; then PORT_LINE="port = $((8100 + $(id -u) % 900))"; fi
+{
+  printf '# Personal settings for this copy (not shared, not in git).\n'
+  if [[ -n $ME ]]; then printf 'me = "%s"\n' "$ME"; fi
+  if [[ -n $PORT_LINE ]]; then printf '%s\n' "$PORT_LINE"; fi
+} > config.local.toml
 
 say "5/6  Indexing the data (about a minute)"
 ./run.sh index
