@@ -1,236 +1,260 @@
 # CMOS Browser
 
-A web app for browsing the CMOS camera data on the server: browse by night or
-object, filter by metadata, preview images with adjustable stretch, read the
-full headers and telescope/weather metadata, judge and tag photos with the
-team, and download the original files.
+A web application for looking through the images taken by the telescope's CMOS
+camera. The images are stored on a shared server, one folder per observing
+night. CMOS Browser runs on that server and shows them in Firefox as a
+searchable gallery. You can open any image, adjust its display, read its
+technical details, download the original files, and mark images as good or
+bad together with the rest of the team.
 
 ![CMOS Browser](docs/images/exposure.jpg)
 
-**📖 [User guide with screenshots](docs/USER_GUIDE.md)**: how to get access,
-install, and use every part of the app.
+New users should start with the [user guide](docs/USER_GUIDE.md), which
+explains how to get access, install the application and use it, with
+screenshots. The rest of this README is reference material for setup and
+maintenance.
 
-**The data is only ever read.** The app never writes, moves or renames anything
-in the data folder (`/storage/hdd/cmos` on the current server). Everything it
-creates stays in the app's own folder.
+## Overview
 
-Everyone runs **their own copy** in **their own remote-desktop session** on the
-server, so nobody depends on anyone else's session. The code lives here on
-GitHub (public, no data in it) and updates itself. Verdicts, tags, ratings and
-notes are shared with the team through a **private** GitHub repo.
+- The data is read-only. The application never writes to the data folder
+  (`/storage/hdd/cmos` on the current server); everything it creates is stored
+  in its own directory.
+- Each user runs their own copy in their own remote desktop session, on their
+  own port. Copies do not depend on each other.
+- The code is hosted in this public repository and contains no data. Copies
+  update themselves from `main`.
+- Verdicts, tags, ratings and notes are synchronized between users through the
+  private repository `ChristineMountain/cmos-ratings`.
 
-## Quick start
+## Requirements
 
-1. Get a **server login** from a server admin, and send your **GitHub
-   username** to the maintainer (see [Who to ask](#who-to-ask)).
-2. In your **remote desktop on the server**, open a **Terminal** and paste:
+- A user account on the server with remote desktop access.
+- A GitHub account with access to `cmos-ratings`. Annotations are recorded
+  under the GitHub username.
 
-   ```bash
-   bash <(curl -fsSL https://raw.githubusercontent.com/ChristineMountain/cmos-browser/main/install.sh)
-   ```
+## Installation
 
-   Sign in to GitHub when it asks (it shows a code; paste it into the page that
-   opens in Firefox and click **Authorize**).
-3. Double-click **CMOS Browser** on your desktop.
+Run the following in a terminal inside the remote desktop on the server:
 
-The [user guide](docs/USER_GUIDE.md) explains each step in detail.
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/ChristineMountain/cmos-browser/main/install.sh)
+```
 
-## Who to ask
+The installer sets up a Python environment with micromamba, clones this
+repository to `~/cmos-browser`, signs in to GitHub, clones the ratings
+repository, assigns a personal port, builds the index, and adds a desktop
+launcher and an autostart entry. It can be re-run safely to repair or complete
+an installation; existing annotations are kept.
 
-| For | Ask |
+## Usage
+
+Start the application with the CMOS Browser desktop launcher. It runs
+`run.sh open`, which updates the code, starts the server and opens it in
+Firefox. The server is also started at login and restarted by a watchdog if it
+stops.
+
+`run.sh` commands:
+
+| Command | Description |
 |---|---|
-| A login on the server | A server admin (anyone in the server's `sudo` group) |
-| An invitation to share ratings (the private `cmos-ratings` repo), or problems with the app | The maintainer: [@ChristineMountain](https://github.com/ChristineMountain) |
+| `./run.sh open` | Update, start, and open in Firefox (used by the launcher) |
+| `./run.sh start` / `stop` / `restart` | Control the server |
+| `./run.sh status` | Show whether the server is running and its address |
+| `./run.sh index [--only NIGHT] [--rebuild]` | Update the index |
+| `./run.sh update` | Pull the latest version from GitHub |
+| `./run.sh watchdog` | Keep the server running and up to date (started at login) |
+| `./run.sh editlink` | Print a link that enables editing from another browser |
 
-*Maintainers: keep this table up to date when the project changes hands (see
-[Handing the project over](#handing-the-project-over)).*
+## Contacts
 
-## Updates
+| Request | Contact |
+|---|---|
+| Server account | A server administrator (members of the `sudo` group) |
+| Access to `cmos-ratings`, bugs, questions | Maintainer: [@ChristineMountain](https://github.com/ChristineMountain) |
 
-**Nobody reinstalls.** The app updates from GitHub every time it's opened from
-the desktop icon, and at login, and every 5 minutes while it runs (`./run.sh update` does it by hand). If a change
-needs new Python packages (`environment.yml`), the update installs them. With
-no network, the current version keeps running.
+## Configuration
 
-## For the maintainer
+`config.toml` holds the shared settings and is tracked in git.
+`config.local.toml` holds per-user settings (GitHub username, port), is not
+tracked, and overrides `config.toml`.
 
-### Adding a new person
+| Setting | Description |
+|---|---|
+| `data_root` | Data directory. A list is allowed; the first existing path is used. |
+| `include` | Glob patterns, relative to `data_root`, for the folders to index |
+| `port` | Server port. Set per user in `config.local.toml`. |
+| `auto_refresh_minutes` | Interval for automatic re-indexing (0 disables it) |
+| `viewer_url`, `viewer_root` | Link format for the port-8003 image viewer |
+| `cache_max_mb`, `min_free_mb` | Thumbnail cache limits |
+| `everyone_can_edit`, `safe_sharing` | Access control for visitors other than the owner of the copy |
+| `local_utc_offset_hours` | Offset of the times in `*_meta.json` (Arizona, -7) |
 
-1. They need a **server login** first (a server admin creates it).
-2. They send you their **GitHub username**.
-3. Invite them to the ratings repo: on github.com, open
-   **cmos-ratings → Settings → Collaborators → Add people**, enter their
-   username and give them **Write** access. Or in a terminal:
+Restart the server after changing the configuration.
 
-   ```bash
-   gh api -X PUT repos/ChristineMountain/cmos-ratings/collaborators/THEIR_USERNAME -f permission=push
-   ```
+### Indexing
 
-4. They run the installer (or run it again if they already installed). It
-   accepts the invitation for them. **Invitations expire after 7 days**; invite
-   them again if it ran out.
-
-Nobody needs an invitation to `cmos-browser` itself: it's public. To stop
-sharing with someone, remove them under *Collaborators*. Their file stays in the
-repo until you delete it.
-
-### Handing the project over
-
-Only an **admin** of the GitHub repos can invite people and publish changes.
-Before the current maintainer leaves:
-
-1. **cmos-ratings → Settings → Collaborators**: set the new maintainer's role to
-   **Admin**.
-2. **cmos-browser → Settings → Collaborators → Add people**: add the new
-   maintainer as **Admin**.
-3. Update the [Who to ask](#who-to-ask) table above.
-
-Both repos stay under the original owner's GitHub account, and everything keeps
-working as long as that account exists. If it will be deleted, **transfer both
-repos** to the new maintainer first (*Settings → General → Transfer
-ownership*), then replace `ChristineMountain` with the new owner in
-`install.sh`, `README.md` and `docs/USER_GUIDE.md`. Existing copies keep
-updating, because GitHub redirects the old address.
-
-### Changing the code
-
-Edit the code in `~/cmos-browser`, test it (`./run.sh restart`, then reload
-the page), and publish it:
+The server re-indexes every 15 minutes at low priority; only new or changed
+exposures are read. To index manually, for example right after an observing
+run:
 
 ```bash
-cd ~/cmos-browser
-git add -A && git commit -m "Describe the change"
-git push
+./run.sh index                    # all folders matched by `include`
+./run.sh index --only 20260915    # a single folder
+./run.sh index --rebuild          # re-read everything
 ```
 
-Everyone gets it within 5 minutes, or the next time they open the app. **Test
-before you push**: a broken version reaches everyone. To undo the last change
-for everyone: `git revert HEAD && git push`.
+A full rebuild takes under a minute. The index stores `data_root` and is
+rebuilt automatically if the data directory changes.
 
-`config.toml` is shared with everyone. Personal settings go in
-`config.local.toml` (not in git), which overrides it.
+### Adding folders
 
-### Updating the screenshots in the user guide
-
-The images in `docs/images/` are screenshots of a copy with demo ratings (so no
-one's real notes end up in this public repo). Retake them the same way if the
-app's look changes a lot.
-
-## New data shows up automatically
-
-The server re-scans the data folders **every 15 minutes** at the lowest
-priority. A scan that finds nothing new takes well under a second. New
-exposures appear within about 15 minutes. An open page shows a *"New data has
-been added — Reload"* note. Hover over the totals in the top bar to see when the
-index was last updated. Set the interval with `auto_refresh_minutes` in
-`config.toml` (0 turns it off; restart after changing).
-
-You can still update by hand at any time, e.g. right after an observing run:
-
-```bash
-./run.sh index                    # scan everything in config.toml; only new/changed exposures are read
-./run.sh index --only 20260915    # just one night
-./run.sh index --rebuild          # re-read everything (rarely needed)
-```
-
-The server does not need a restart. Reload the page to see the new data.
-A manual update and the automatic one never run at the same time. If one is
-busy, the other waits for the next turn or tells you to try again.
-A full scan of all nights takes about 35 seconds. Updates usually take a few
-seconds. Indexing runs at the lowest CPU priority (`nice 19`) and low disk
-priority.
-
-## Opening an exposure in the port-8003 viewer
-
-Every exposure has an **Open in viewer ↗** button (top right of its page, and a
-*Viewer ↗* link on each gallery card and in the *Files* tab). It opens that exact
-exposure in the existing image viewer in a new tab, for example
-`http://172.18.0.1:8003/viewer/?ct=…&dir=slow%2F20260131&screen=viewer&path=slow%2F20260131%2Fobject00060`.
-This viewer can also do things this app doesn't, such as astrometry and catalogs.
-The link pattern is `viewer_url` / `viewer_root` in `config.toml`. If the viewer's
-address changes, edit it there and restart (`./run.sh restart`). The viewer runs on the Docker host, outside everyone's sessions. The links use
-`172.18.0.1:8003` (the host's address on the internal network), which works
-from Firefox in any remote desktop on the server.
-
-## Adding more folders
-
-Edit `include` in `config.toml`. Patterns are relative to the data folder (`data_root`). For example:
+Add a pattern to `include` in `config.toml` and run `./run.sh index`. Ask the
+owner of a folder before adding it.
 
 ```toml
 include = [
   "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]",   # dated night folders (default)
-  "someone/project/*/*",                          # add only after asking the owner
+  "someone/project/*/*",
 ]
 ```
 
-Then run `./run.sh index`. Removing a pattern and re-indexing removes those
-exposures from the app.
+Removing a pattern and re-indexing removes those exposures from the index.
 
-## What's where
+### Image viewer links
 
-| File | Purpose |
+Each exposure links to the existing image viewer on port 8003, which provides
+astrometry and catalog overlays. The links are built from `viewer_url` and
+`viewer_root`. The viewer runs on the Docker host, which is reachable from the
+remote desktops at `172.18.0.1:8003`.
+
+## Maintenance
+
+### Adding a user
+
+1. The user obtains a server account from an administrator.
+2. The user sends their GitHub username to the maintainer.
+3. The maintainer invites them to `cmos-ratings` with write access, either under
+   Settings > Collaborators > Add people, or with:
+
+   ```bash
+   gh api -X PUT repos/ChristineMountain/cmos-ratings/collaborators/USERNAME -f permission=push
+   ```
+
+4. The user runs the installer, or runs it again if already installed. The
+   installer accepts the invitation. Invitations expire after 7 days.
+
+No invitation is needed for this repository, since it is public. To revoke
+access, remove the user under Collaborators; their ratings file remains in the
+repository until deleted.
+
+### Transferring maintenance
+
+Inviting users and publishing changes require admin access to both
+repositories. Before the maintainer leaves:
+
+1. In `cmos-ratings`, Settings > Collaborators: change the new maintainer's role
+   to Admin.
+2. In `cmos-browser`, Settings > Collaborators: add the new maintainer as Admin.
+3. Update the [Contacts](#contacts) table.
+
+The repositories remain under the original account and keep working as long as
+that account exists. If it will be deleted, transfer both repositories
+(Settings > General > Transfer ownership) and replace `ChristineMountain` in
+`install.sh`, `README.md` and `docs/USER_GUIDE.md`. Existing copies continue to
+update through GitHub's redirect.
+
+### Publishing changes
+
+Test changes locally (`./run.sh restart` and reload the page), then:
+
+```bash
+git add -A
+git commit -m "Describe the change"
+git push
+```
+
+Running copies pick up the change within five minutes or the next time they
+are opened. Since every copy updates automatically, test before pushing. To
+roll back the last change: `git revert HEAD && git push`.
+
+If `environment.yml` changes, copies install the new packages on update.
+
+### Documentation screenshots
+
+The images in `docs/images/` were taken from a separate copy with sample
+annotations, so that no real notes are published. Use the same approach when
+updating them.
+
+## Project layout
+
+| Path | Description |
 |---|---|
-| `config.toml` | Shared settings: data folders, cache limits |
-| `index.py` | Builds the SQLite index (`index.sqlite`, about 3.5 MB) from headers and `*_meta.json` |
-| `cmosdata.py` | Read-only file access: FITS/zstd/pack headers and pixels |
 | `app.py` | Web server (FastAPI) |
-| `static/` | The web page (plain HTML/CSS/JS) |
-| `userdata.sqlite` | Your collections, plus everyone's ratings and notes (yours are backed up on GitHub) |
-| `sync.py` | Shares ratings and notes through the private GitHub repo |
-| `ratings-data/` | Your copy of the private ratings repo (made by `install.sh`) |
-| `install.sh` | The installer (also safe to re-run as a repair) |
-| `environment.yml` | Python packages the app needs |
-| `config.local.toml` | Your personal settings: your GitHub name and port (not in git) |
-| `edit_key.txt` | Private key that unlocks editing in a browser (`./run.sh editlink`) |
-| `cache/thumbs/` | Gallery thumbnails (WebP, about 5–70 KB each) |
-| `run.sh` | start / stop / restart / status / index / update / open |
-| `docs/` | The user guide and its screenshots |
-| `server.log` | Server errors, if any |
-| `.env/` | The app's own Python environment (made by `install.sh`) |
+| `index.py` | Builds the SQLite index from FITS headers and `*_meta.json` |
+| `cmosdata.py` | Read-only access to FITS, zstd and pack files |
+| `sync.py` | Synchronizes annotations with the ratings repository |
+| `static/` | Front end (plain HTML, CSS and JavaScript) |
+| `run.sh` | Control script |
+| `install.sh` | Installer |
+| `environment.yml` | Python dependencies |
+| `config.toml` | Shared configuration |
+| `docs/` | User guide and screenshots |
 
-## How it behaves on the shared server
+Generated files, not tracked:
 
-- **Thumbnails** are made only when a card scrolls into view, at most two at a
-  time. Each reads frame 0 of each sensor (about 1 s). They are cached on disk
-  with a **200 MB cap**: the oldest are deleted first. Nothing is written if free
-  disk space drops below **500 MB**. Both limits are in `config.toml`. You can
-  delete `cache/thumbs/*` at any time.
-- **Previews** in the viewer are binned (4×4 or 8×8 by default) and sent to the
-  browser once. Stretch and levels are then applied in the browser, so sliders
-  don't load the server. Recent previews are kept in memory only (at most 64 MB).
-- The server runs at `nice 10` with at most two image reads at a time. Late
-  frames in compressed `.fits.zst` files are refused, because they would need
-  long decompression (both `.fits.zst` and `.hpkcmos-pack.zst`).
+| Path | Description |
+|---|---|
+| `config.local.toml` | Per-user configuration |
+| `index.sqlite` | Exposure index (about 4 MB) |
+| `userdata.sqlite` | Collections and annotations. Back this up. |
+| `ratings-data/` | Clone of the ratings repository |
+| `cache/thumbs/` | Thumbnail cache (WebP) |
+| `edit_key.txt` | Key for `./run.sh editlink` |
+| `server.log`, `watchdog.log` | Logs |
+| `.env/` | Python environment |
 
-## Notes about the data
+## Resource usage
 
-- An *exposure* is `objectNNNNN_meta.json` plus up to 6 sensor files
-  `objectNNNNN_0 … _5` in FITS, `.fits.zst`, or raw `.hpkcmos-pack(.zst)`.
-- **Raw `.hpkcmos-pack` files are previewed** just like FITS (FITS is used when
-  both exist). The decoder (`read_pack_frame` in `cmosdata.py`) was checked pixel
-  for pixel against FITS converted from the same captures. Sensors can store
-  different numbers of frames; the frame slider follows the selected sensor.
-- **Exposure time** comes from the FITS `EXPTIME` when available. Otherwise it is
-  `NEXP × line time` (mode 10: 10 µs, mode 12: 33.3 µs), which matches `EXPTIME`
-  exactly in the files checked. 2025 files used an older header in which
-  `EXPTIME` held the NEXP count. This is handled.
-- Times in `meta.json` are Arizona local time (UTC−7). The app shows UTC.
-- **Filter names** are normalized for filtering only (`OG-515` → `OG515`,
-  `DD051` → `DDO51`). The original value is always shown.
-- **The mosaic** shows sensors 0–5 side by side in number order. The WCS headers
-  do not give the true focal-plane layout.
-- **Thumbnails** subtract each column's median so stars stand out. The viewer
-  shows raw values unless you tick "Flatten columns". The data itself is never
-  changed.
-- Some files are not readable by every account (many June 2026 nights). The
-  app marks them "no access". Ask the data owner if you need them.
+The server is shared, so the application is deliberately conservative:
+
+- The server runs at `nice 10` and reads at most two images at a time.
+  Indexing runs at `nice 19` with low I/O priority.
+- Thumbnails are generated when a card scrolls into view (two at a time, about
+  one second each), cached on disk up to 200 MB, and not written when free
+  space is below 500 MB.
+- Viewer previews are binned (4x4 or 8x8 by default) and transferred once;
+  stretching happens in the browser. At most 64 MB of previews are kept in
+  memory.
+- Late frames of compressed files (`.fits.zst`, `.hpkcmos-pack.zst`) are not
+  served, since they would require long decompression.
+
+## Data notes
+
+- An exposure consists of `objectNNNNN_meta.json` and up to six sensor files
+  `objectNNNNN_0` to `_5`, as FITS, `.fits.zst` or raw `.hpkcmos-pack(.zst)`.
+- Raw pack files are decoded by `read_pack_frame` in `cmosdata.py`, which was
+  verified pixel for pixel against FITS files converted from the same captures.
+  FITS is used when both exist. Sensors may store different numbers of frames.
+- Exposure time is taken from the FITS `EXPTIME` keyword when available,
+  otherwise computed as `NEXP x line time` (10 us in mode 10, 33.3 us in mode
+  12). In 2025 files, `EXPTIME` held the NEXP count; this is handled.
+- Times in `*_meta.json` are Arizona local time (UTC-7). The application
+  displays UTC.
+- Filter names are normalized for filtering (`OG-515` to `OG515`, `DD051` to
+  `DDO51`); the original value is displayed.
+- Sensors are displayed in their on-sky arrangement (0, 3, 1, 4, 2, 5 from left
+  to right, with 3 to 5 rotated by 180 degrees), derived from the WCS headers.
+- Thumbnails subtract the median of each column. The viewer shows raw values
+  unless "Flatten columns" is enabled. The data files are never modified.
+- Some files are not readable by all accounts (many June 2026 nights). These are
+  marked "no access".
 
 ## Troubleshooting
 
-See [Troubleshooting in the user guide](docs/USER_GUIDE.md#13-troubleshooting).
-Also:
+See the [troubleshooting section](docs/USER_GUIDE.md#troubleshooting) of the
+user guide. In addition:
 
-- *"Couldn't update"*: files in `~/cmos-browser` were changed by hand. Run
-  `git -C ~/cmos-browser status` to see which, or run the installer again to go
-  back to the official version.
-- *Something broke*: check `server.log`, then `./run.sh restart`.
+- "Couldn't update": files in `~/cmos-browser` have local changes. Check with
+  `git -C ~/cmos-browser status`, or re-run the installer to restore the
+  released version.
+- For other errors, check `server.log` and run `./run.sh restart`.
