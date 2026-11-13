@@ -127,6 +127,8 @@ EOF
 setsid ./run.sh watchdog < /dev/null > /dev/null 2>&1 &
 
 say "Done."
-echo "Double-click 'CMOS Browser' on your desktop, or open http://localhost:8010/ in Firefox here."
+PORT=$(sed -nE 's/^port *= *([0-9]+).*/\1/p' config.local.toml | tail -1)
+[[ -n $PORT ]] || PORT=$(sed -nE 's/^port *= *([0-9]+).*/\1/p' config.toml)
+echo "Double-click 'CMOS Browser' on your desktop, or open http://localhost:$PORT/ in Firefox here."
 [[ -n $ME && ! -d ratings-data/.git ]] && warn "Remember: ask the owner to invite '$ME' to share ratings."
 exit 0

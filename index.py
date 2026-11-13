@@ -100,6 +100,16 @@ def update_index(cfg, only=None, rebuild=False, log=print):
     try:
         db = connect(cfg["index_db"])
         t0 = time.time()
+        # Files are stored with absolute paths. If the data moved (e.g. /data -> /storage/hdd/cmos)
+        # but kept its sizes and dates, every exposure would look unchanged and keep the old,
+        # broken paths, so re-read everything once when data_root changes.
+        prev = db.execute("SELECT value FROM info WHERE key='data_root'").fetchone()
+        if prev is None:  # older index: tell from a stored file path
+            p = db.execute("SELECT path FROM files LIMIT 1").fetchone()
+            prev = (root,) if p is None or p[0].startswith(root.rstrip("/") + "/") else ("?",)
+        if prev[0] != root:
+            log(f"Data folder changed ({prev[0]} -> {root}): re-reading everything")
+            rebuild = True
         stats = {"new": 0, "updated": 0, "unchanged": 0, "removed": 0, "errors": 0}
         for i, folder in enumerate(folders, 1):
             rel = os.path.relpath(folder, root)
@@ -151,6 +161,8 @@ def update_index(cfg, only=None, rebuild=False, log=print):
         with db:
             db.execute("INSERT OR REPLACE INTO info VALUES ('last_indexed', ?)", (str(time.time()),))
             db.execute("INSERT OR REPLACE INTO info VALUES ('last_stats', ?)", (json.dumps(stats),))
+            if not only:
+                db.execute("INSERT OR REPLACE INTO info VALUES ('data_root', ?)", (root,))
         db.execute("PRAGMA wal_checkpoint(PASSIVE)")
         db.close()
         return stats

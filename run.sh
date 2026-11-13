@@ -17,6 +17,15 @@ MAMBA="$HOME/.local/bin/micromamba"
 PIDFILE=server.pid
 # config.local.toml (personal) overrides config.toml.
 PORT=$(sed -nE 's/^port *= *([0-9]+).*/\1/p' config.local.toml 2>/dev/null | tail -1)
+# On the shared server (everyone on one machine) each copy needs its own port. Copies
+# installed before that have none and would all fight over the default one, so give them
+# the same personal port install.sh gives (app.py reads it from config.local.toml too).
+if [[ -z $PORT && -d /storage/hdd/cmos ]]; then
+  PORT=$((8100 + $(id -u) % 900))
+  [[ -s config.local.toml && -n $(tail -c1 config.local.toml) ]] && echo >> config.local.toml
+  { [[ -s config.local.toml ]] || printf '# Personal settings for this copy (not shared, not in git).\n'
+    printf 'port = %s\n' "$PORT"; } >> config.local.toml
+fi
 [[ -n $PORT ]] || PORT=$(sed -nE 's/^port *= *([0-9]+).*/\1/p' config.toml)
 
 # Also check the pid really is our app.py: after a container restart the old pid may belong to something else.
@@ -25,7 +34,7 @@ running() { [[ -f $PIDFILE ]] && kill -0 "$(cat $PIDFILE)" 2>/dev/null && grep -
 case "${1:-}" in
   start)
     if running; then echo "Already running (pid $(cat $PIDFILE)) on port $PORT"; exit 0; fi
-    if ss -ltn 2>/dev/null | grep -q ":$PORT "; then echo "Port $PORT is in use by another program. Change 'port' in config.toml."; exit 1; fi
+    if ss -ltn 2>/dev/null | grep -q ":$PORT "; then echo "Port $PORT is in use by another program. Set another 'port = ...' in config.local.toml."; exit 1; fi
     # Low CPU (nice 10) and best-effort lowest disk priority: be kind to other users.
     # 9>&-: the server must not inherit the watchdog's lock, or a new watchdog could never start.
     nohup nice -n 10 ionice -c2 -n7 $PY app.py >> server.log 2>&1 9>&- &
@@ -67,7 +76,12 @@ case "${1:-}" in
     ;;
   open)
     "$0" update || true
-    "$0" start
+    if ! msg=$("$0" start 2>&1); then
+      # The desktop icon has no terminal, so say what went wrong in a window.
+      zenity --error --title="CMOS Browser" --text="CMOS Browser could not start:\n\n$msg\n\nDetails: $PWD/server.log" 2>/dev/null \
+        || notify-send "CMOS Browser could not start" "$msg" 2>/dev/null || echo "$msg" >&2
+      exit 1
+    fi
     # keep it running for the rest of the session (only one watchdog ever runs)
     setsid "$0" watchdog < /dev/null > /dev/null 2>&1 &
     (firefox "http://localhost:$PORT/" > /dev/null 2>&1 &)
