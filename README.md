@@ -1,166 +1,100 @@
 # CMOS Browser
 
-A small web app for browsing the CMOS camera data under `/data`. You can browse
-by night or object, filter by metadata, preview images with adjustable stretch,
-read the full headers and telescope/weather metadata, and download the original
-files.
+A web app for browsing the CMOS camera data on the server: browse by night or
+object, filter by metadata, preview images with adjustable stretch, read the
+full headers and telescope/weather metadata, judge and tag photos with the
+team, and download the original files.
+
+![CMOS Browser](docs/images/exposure.jpg)
+
+**📖 [User guide with screenshots](docs/USER_GUIDE.md)**: how to get access,
+install, and use every part of the app.
 
 **The data is only ever read.** The app never writes, moves or renames anything
-in `/data` (which is also mounted read-only). Everything it creates stays in
-this folder.
+in the data folder (`/storage/hdd/cmos` on the current server). Everything it
+creates stays in the app's own folder.
 
 Everyone runs **their own copy** in **their own remote-desktop session** on the
-server, so nobody depends on anyone else's session. The code lives on GitHub
-(public, no data in it) and updates itself. Ratings and notes are shared with
-the team through a **private** GitHub repo.
+server, so nobody depends on anyone else's session. The code lives here on
+GitHub (public, no data in it) and updates itself. Verdicts, tags, ratings and
+notes are shared with the team through a **private** GitHub repo.
 
-## Install (once per person)
+## Quick start
 
-You need: a login on the server's remote desktop, and a free
-[GitHub account](https://github.com/signup) (**required**: everyone's verdicts,
-ratings and notes are recorded under their GitHub name).
-
-1. **Send the owner your GitHub username**, so they can invite you to the
-   private ratings repo (see *For the owner* below). You can install before the
-   invite arrives; sharing just starts once it's there.
+1. Get a **server login** from a server admin, and send your **GitHub
+   username** to the maintainer (see [Who to ask](#who-to-ask)).
 2. In your **remote desktop on the server**, open a **Terminal** and paste:
 
    ```bash
    bash <(curl -fsSL https://raw.githubusercontent.com/ChristineMountain/cmos-browser/main/install.sh)
    ```
 
-   It takes about 5 minutes the first time. When it asks you to sign in to
-   GitHub, it shows a code and opens a page in Firefox: paste the code there
-   and click **Authorize**. The install won't continue without signing in. It accepts the invitation to the ratings repo for
-   you.
-3. Double-click **CMOS Browser** on your desktop. If the desktop asks whether to
-   trust the launcher, choose *Launch Anyway* / *Mark as trusted*.
+   Sign in to GitHub when it asks (it shows a code; paste it into the page that
+   opens in Firefox and click **Authorize**).
+3. Double-click **CMOS Browser** on your desktop.
 
-Running the installer again is safe: it finishes or repairs an install and keeps
-your ratings and notes. Run it again after you get the invite, if you installed
-before.
+The [user guide](docs/USER_GUIDE.md) explains each step in detail.
 
-## Every day
+## Who to ask
 
-Log in to the remote desktop and double-click **CMOS Browser**. That's it:
-it fetches the latest version from GitHub, starts, and opens Firefox at
-**http://localhost:8010/**. It also starts by itself when you log in.
-
-The top bar shows who you are and whether sharing works, e.g.
-**👤 alice · synced 2 min ago**. Click it to sync right away. It turns red if
-the last sync failed; hover over it to see why.
-
-## Sorting through photos: verdicts, tags, triage
-
-Every photo can get a **verdict** and any number of **tags** from each person:
-
-- **Verdict**: ✅ **Good**, 🗑 **Junk** or ❔ **Unsure**. One per person per photo.
-  **Junk only marks a file.** The app never deletes anything. See *The junk
-  list* below.
-- **Tags**: free text, like categories you can search for later:
-  `satellite trail`, `cloudy`, `focus test`, `good seeing`… While you type, the
-  app suggests tags people have already used, so the team ends up using the
-  same words. Capitals don't matter (`Cloudy` and `cloudy` are one tag).
-
-**Triage** (button above the gallery) goes through the photos you haven't
-judged yet, one at a time, within whatever you're looking at (a night, an
-object, a search). The top bar shows how many are left. Keys:
-
-| Key | Does |
+| For | Ask |
 |---|---|
-| `G` / `J` / `U` | Good / Junk / Unsure, and go to the next photo |
-| `T` | Type a tag (`Enter` adds it, `Esc` goes back) |
-| `→` | Skip this photo for now |
-| `1`–`5` | Star rating |
-| `Esc` | Stop triage |
+| A login on the server | A server admin (anyone in the server's `sudo` group) |
+| An invitation to share ratings (the private `cmos-ratings` repo), or problems with the app | The maintainer: [@ChristineMountain](https://github.com/ChristineMountain) |
 
-The same buttons and keys work on any photo's page outside triage too (press a
-verdict again to clear it). To judge or tag many photos at once: **Select** in
-the gallery, pick them, then *Verdict…* or *Tag…* (type `-cloudy` to remove a
-tag).
-
-**Finding photos again:**
-
-- **Sidebar → Tags** lists every tag with how many photos have it and who used
-  it. Click one to show those photos.
-- **Filters → Verdict**: Good / Junk / Unsure (by anyone), *Not judged by
-  anyone*, or *Not judged by me*.
-- **The search box** understands `tag:cloudy`, `tag:"satellite trail"`,
-  `verdict:junk` and `night:20260914`, combined with plain words, e.g.
-  `tag:"satellite trail" verdict:good M13`. Plain words also match tags.
-- Gallery cards show the verdicts (🗑 2 · ✅ 1 means two people said junk and
-  one said good; it's red when people disagree) and the tags.
-
-**The junk list:** *Filters → Download the junk list* gives a text file of
-every photo someone marked Junk: who marked it (and anyone who disagreed), and
-the full paths of its files. Hand it to whoever owns the data to review and
-delete. Disagreements are counted at the top so they get checked first.
-
-## Looking at images
-
-- **Frames:** drag the slider under the image to scrub through frames (only
-  the position you stop on is read, so dragging is safe). `‹` `›` or `[` `]` step
-  one frame. ▶ or `P` plays the frames in a loop.
-- **Stretch controls** float over the image (drag them by the title bar, close
-  with ×, bring back with the *Stretch controls* button or `S`).
-  - **Apply auto stretch** (or `A`) works like the CMOS Viewer:
-    Black = Offset − Factor × MAD, White = Offset + Factor × MAD, where Offset is
-    the median pixel value and MAD the median absolute deviation from it. The
-    Factor starts at 5; changing it re-applies the auto stretch. Every
-    exposure opens auto-stretched.
-  - **Black / White / Gamma**: slider or typed value. The display is
-    `(clamp((pixel − black) / (white − black), 0, 1)) ^ (1 / gamma)`, so gamma 1
-    is linear and gamma above 1 brightens mid-tones. You can also drag the two
-    markers on the histogram. Black and white can be equal (a hard threshold).
-  - **Invert** swaps black and white. **Reset** returns to the defaults (auto
-    stretch with Factor 5, gamma 1, not inverted, linear, gray).
-  - **Re-stretch each frame**: on, the auto stretch is recomputed for every
-    frame. Off, the levels stay fixed while scrubbing, so brightness changes
-    between frames are visible.
-  - With several sensors, **all sensors share one tone scale**, computed from
-    all of them together, so their brightness can be compared.
-- **Sensor layout**: all sensors are shown as they sit on the sky, like the
-  CMOS Viewer: left to right 0, 3, 1, 4, 2, 5, with sensors 3–5 rotated by 180°
-  and the real gaps between sensors. This comes from the per-sensor WCS in the
-  FITS headers, which is the same on every night, so raw files use it too.
-- **Pixel inspector** (lower right) shows the sensor, the pixel (0-based x and
-  file row y of the full-resolution pixel) and the value under the cursor. When
-  binned, the value is the mean of the bin.
-- **Zoom**: mouse wheel, drag to pan, ⤢ or double-click to fit, 1:1 for one
-  image pixel per screen pixel.
-
-## Ratings, notes and collections
-
-- **Verdicts, tags, ratings and notes are yours**, saved under your GitHub
-  name. They are shared automatically (a few seconds after you change something,
-  and every 2 minutes) through the private repo `ChristineMountain/cmos-ratings`,
-  one file per person (`ratings/<name>.json`). Each photo's page shows
-  everyone else's under **Others**, and everyone's tags are searchable.
-- **Collections stay on your copy**. They are not shared.
-- Everything is saved on your copy first, so the app works fine offline or if
-  GitHub is down; it catches up later.
-- **Everything as a spreadsheet:** open
-  http://localhost:8010/api/annotations/export.csv (one row per person per
-  photo: verdict, rating, tags, note).
-
-## Sharing links
-
-The **Share** button copies a link to what you're looking at (a night, a
-filtered search, or one exposure). Anyone with the app installed can open it in
-their Firefox on the server. Links to a single exposure use its folder and name
-(`#/x/20260914/object00026`), so they work in everyone's copy. Collection links
-only work for you, because collections aren't shared.
+*Maintainers: keep this table up to date when the project changes hands (see
+[Handing the project over](#handing-the-project-over)).*
 
 ## Updates
 
 **Nobody reinstalls.** The app updates from GitHub every time it's opened from
-the desktop icon, and at login (`./run.sh update` does it by hand). If a change
+the desktop icon, and at login, and every 5 minutes while it runs (`./run.sh update` does it by hand). If a change
 needs new Python packages (`environment.yml`), the update installs them. With
 no network, the current version keeps running.
 
-## For the owner
+## For the maintainer
 
-**Edit the code** in `~/cmos-browser`, test it (`./run.sh restart`, then reload
+### Adding a new person
+
+1. They need a **server login** first (a server admin creates it).
+2. They send you their **GitHub username**.
+3. Invite them to the ratings repo: on github.com, open
+   **cmos-ratings → Settings → Collaborators → Add people**, enter their
+   username and give them **Write** access. Or in a terminal:
+
+   ```bash
+   gh api -X PUT repos/ChristineMountain/cmos-ratings/collaborators/THEIR_USERNAME -f permission=push
+   ```
+
+4. They run the installer (or run it again if they already installed). It
+   accepts the invitation for them. **Invitations expire after 7 days**; invite
+   them again if it ran out.
+
+Nobody needs an invitation to `cmos-browser` itself: it's public. To stop
+sharing with someone, remove them under *Collaborators*. Their file stays in the
+repo until you delete it.
+
+### Handing the project over
+
+Only an **admin** of the GitHub repos can invite people and publish changes.
+Before the current maintainer leaves:
+
+1. **cmos-ratings → Settings → Collaborators**: set the new maintainer's role to
+   **Admin**.
+2. **cmos-browser → Settings → Collaborators → Add people**: add the new
+   maintainer as **Admin**.
+3. Update the [Who to ask](#who-to-ask) table above.
+
+Both repos stay under the original owner's GitHub account, and everything keeps
+working as long as that account exists. If it will be deleted, **transfer both
+repos** to the new maintainer first (*Settings → General → Transfer
+ownership*), then replace `ChristineMountain` with the new owner in
+`install.sh`, `README.md` and `docs/USER_GUIDE.md`. Existing copies keep
+updating, because GitHub redirects the old address.
+
+### Changing the code
+
+Edit the code in `~/cmos-browser`, test it (`./run.sh restart`, then reload
 the page), and publish it:
 
 ```bash
@@ -169,23 +103,18 @@ git add -A && git commit -m "Describe the change"
 git push
 ```
 
-Everyone gets it the next time they open the app. **Test before you push**: a
-broken version reaches everyone. To undo the last change for everyone:
-`git revert HEAD && git push`.
+Everyone gets it within 5 minutes, or the next time they open the app. **Test
+before you push**: a broken version reaches everyone. To undo the last change
+for everyone: `git revert HEAD && git push`.
 
 `config.toml` is shared with everyone. Personal settings go in
 `config.local.toml` (not in git), which overrides it.
 
-**Invite a coworker** to share ratings (they need to have sent you their GitHub
-username):
+### Updating the screenshots in the user guide
 
-```bash
-gh api -X PUT repos/ChristineMountain/cmos-ratings/collaborators/THEIR_USERNAME -f permission=push
-```
-
-or on github.com: *cmos-ratings → Settings → Collaborators → Add people*.
-To stop sharing with someone, remove them there. Their file stays in the repo
-until you delete it.
+The images in `docs/images/` are screenshots of a copy with demo ratings (so no
+one's real notes end up in this public repo). Retake them the same way if the
+app's look changes a lot.
 
 ## New data shows up automatically
 
@@ -223,36 +152,9 @@ address changes, edit it there and restart (`./run.sh restart`). The viewer runs
 `172.18.0.1:8003` (the host's address on the internal network), which works
 from Firefox in any remote desktop on the server.
 
-## Organizing: collections, ratings, notes
-
-- **Collections** (sidebar → *Collections* → *+ New collection*) are named groups,
-  like "Good M13 frames" or "Flats for June". An exposure can be in any number
-  of collections. Click a collection to show only its exposures, sort by
-  *Recently added*, or *Rename*, *Export file list* (a text file of the original
-  file paths, handy for scripts) and *Delete*. Deleting a collection only removes
-  the grouping. The exposures and files are untouched.
-- **Select several at once:** in the gallery, click **Select**, click cards (or
-  *Select all shown*), then *Add to collection…*, *Rate…*, or (inside a
-  collection) *Remove from this collection*.
-- **On an exposure's page** (top right): click the **stars** to rate (or press
-  keys 1–5, and 0 to clear; click the same star again to clear it). Add it to
-  collections or remove it with the chips, and type **notes**, which save
-  automatically. Other people's ratings and notes appear below yours under
-  **Others**.
-- **Filter** by *My rating* or *Has my notes* in the sidebar, or sort by
-  *Highest rated*. These use your own ratings and notes. The search box also
-  searches your notes.
-
-All of this lives in **`userdata.sqlite`** in your copy (your ratings and notes
-are also on GitHub), separate from the index, so rebuilding the index never
-affects it. It is keyed by folder and
-exposure name, so it stays attached to the right exposure. **Back up
-`userdata.sqlite` if your organizing matters to you** (`cp userdata.sqlite
-userdata-backup.sqlite`). Nothing is ever written to `/data`.
-
 ## Adding more folders
 
-Edit `include` in `config.toml`. Patterns are relative to `/data`. For example:
+Edit `include` in `config.toml`. Patterns are relative to the data folder (`data_root`). For example:
 
 ```toml
 include = [
@@ -268,7 +170,7 @@ exposures from the app.
 
 | File | Purpose |
 |---|---|
-| `config.toml` | Settings: data folders, port, cache limits |
+| `config.toml` | Shared settings: data folders, cache limits |
 | `index.py` | Builds the SQLite index (`index.sqlite`, about 3.5 MB) from headers and `*_meta.json` |
 | `cmosdata.py` | Read-only file access: FITS/zstd/pack headers and pixels |
 | `app.py` | Web server (FastAPI) |
@@ -278,10 +180,11 @@ exposures from the app.
 | `ratings-data/` | Your copy of the private ratings repo (made by `install.sh`) |
 | `install.sh` | The installer (also safe to re-run as a repair) |
 | `environment.yml` | Python packages the app needs |
-| `config.local.toml` | Your personal settings, e.g. your GitHub name (not in git) |
+| `config.local.toml` | Your personal settings: your GitHub name and port (not in git) |
 | `edit_key.txt` | Private key that unlocks editing in a browser (`./run.sh editlink`) |
 | `cache/thumbs/` | Gallery thumbnails (WebP, about 5–70 KB each) |
 | `run.sh` | start / stop / restart / status / index / update / open |
+| `docs/` | The user guide and its screenshots |
 | `server.log` | Server errors, if any |
 | `.env/` | The app's own Python environment (made by `install.sh`) |
 
@@ -324,14 +227,10 @@ exposures from the app.
 
 ## Troubleshooting
 
-- *"Port 8010 is in use"*: another program has it. Put `port = 8011` in
-  `config.local.toml` and `./run.sh restart`.
-- *The top bar says "not shared"*: GitHub isn't set up for this copy. Run the
-  installer again.
-- *It says "not synced" (red)*: hover over it for the reason. Usually you
-  haven't been invited to `cmos-ratings` yet, or the network is down.
-- *"Couldn't update"*: you changed files in `~/cmos-browser` yourself. Run
-  `git -C ~/cmos-browser status` to see which, or re-run the installer to go
+See [Troubleshooting in the user guide](docs/USER_GUIDE.md#13-troubleshooting).
+Also:
+
+- *"Couldn't update"*: files in `~/cmos-browser` were changed by hand. Run
+  `git -C ~/cmos-browser status` to see which, or run the installer again to go
   back to the official version.
-- *Page loads but is empty*: run `./run.sh index` first.
 - *Something broke*: check `server.log`, then `./run.sh restart`.
