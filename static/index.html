@@ -110,6 +110,12 @@
       <select id="selVerdict"><option value="">Verdict…</option><option value="good">✅ Good</option><option value="junk">🗑 Junk</option><option value="unsure">❔ Unsure</option><option value="">Clear verdict</option></select>
       <button class="btn" id="selTag">Tag…</button>
       <select id="selRate"><option value="">Rate…</option><option value="5">★★★★★</option><option value="4">★★★★</option><option value="3">★★★</option><option value="2">★★</option><option value="1">★</option><option value="0">Clear rating</option></select>
+      <select id="selExport" title="Download a text file with the paths of the selected exposures' files on the server">
+        <option value="">Export paths…</option>
+        <option value="all">Every file (.txt)</option>
+        <option value="zst">.zst files only (.txt)</option>
+        <option value="folders">Folders only (.txt)</option>
+      </select>
       <button class="btn" id="selDone">Done</button>
     </div>
     <div class="grid" id="grid"></div>

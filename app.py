@@ -923,6 +923,34 @@ def export_collection(cid: int):
                     headers={"Content-Disposition": f'attachment; filename="{safe}.txt"'})
 
 
+class ExportSelected(ExposureIds):
+    only: str = Field("all", pattern="^(all|zst|folders)$")
+
+
+@app.post("/api/exposures/export-selected.txt")
+def export_selected(body: ExportSelected):
+    """Plain-text list of the original file paths of the selected exposures, in the order
+    given. only=zst keeps the compressed files (.fits.zst, .hpkcmos-pack.zst); only=folders
+    lists each folder once."""
+    with db() as con:
+        found = {r["id"]: r for r in con.execute(
+            f"SELECT id, folder, prefix FROM exposures WHERE id IN ({','.join('?' * len(body.exposure_ids))})",
+            body.exposure_ids)}
+        items = [found[i] for i in dict.fromkeys(body.exposure_ids) if i in found]
+        what = {"all": "one original file path per line", "zst": "one compressed (.zst) file path per line",
+                "folders": "one folder per line"}[body.only]
+        lines = [f"# CMOS Browser export: {len(items)} selected exposures; {what}", ""]
+        if body.only == "folders":
+            lines += list(dict.fromkeys(os.path.join(CFG["data_root"], it["folder"]) for it in items))
+        else:
+            for it in items:
+                paths = exposure_paths(con, it["id"], it["folder"], it["prefix"])
+                lines += [x for x in paths if x.endswith(".zst")] if body.only == "zst" else paths
+    name = f"cmos-selected-{len(items)}" + ("" if body.only == "all" else "-" + body.only)
+    return Response("\n".join(lines) + "\n", media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.txt"'})
+
+
 @app.put("/api/exposures/{eid}/annotation", dependencies=[Depends(require_edit)])
 def set_annotation(eid: int, body: Annotation, user: str = Depends(require_user)):
     """Set this person's rating and/or note. Fields left out of the request are kept as they are."""

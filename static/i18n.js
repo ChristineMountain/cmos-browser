@@ -114,6 +114,9 @@
     "Export paths…": "パスを書き出し…",
     "Every file (.txt)": "全ファイル (.txt)",
     "Folders only (.txt)": "フォルダーのみ (.txt)",
+    ".zst files only (.txt)": ".zst ファイルのみ (.txt)",
+    "Download a text file with the paths of the selected exposures' files on the server":
+      "選択した露光のファイルのサーバー上のパスをテキストでダウンロード",
     "Go through the photos shown here that you haven't judged yet, one at a time":
       "表示中の写真のうち未判定のものを 1 枚ずつ確認",
     "Triage": "仕分け",
@@ -377,6 +380,7 @@
     [/^Exp ≤ (.+) s$/, "露光 ≤ $1 秒"],
     [/^Mode (.+)$/, "モード $1"],
     [/^Collection (\d+)$/, "コレクション $1"],
+    [/^Exported paths for (\d+) selected exposures?$/, "選択した $1 件の露光のパスを書き出しました"],
     [/^Exporting paths for ([\d,]+) exposures?$/, "$1 件の露光のパスを書き出し中"],
     [/^Added (\d+) to “(.+)”$/, "「$2」に $1 件追加しました"],
     [/^Removed (\d+) from the collection \(the data is not affected\)$/, "コレクションから $1 件外しました（データには影響しません）"],

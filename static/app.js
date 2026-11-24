@@ -463,6 +463,27 @@ $("#selVerdict").onchange = async (e) => {
     await refreshGallery();
   } catch (err) { alert(err.message); }
 };
+$("#selExport").onchange = async (ev) => {
+  const only = ev.target.value;
+  ev.target.value = "";
+  if (!only || !selected.size) return;
+  try {
+    const r = await fetch("/api/exposures/export-selected.txt", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exposure_ids: [...selected], only }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    const name = (r.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || "cmos-selected.txt";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(await r.blob());
+    a.download = name;
+    document.body.append(a);  // Firefox only downloads from a link that is in the page
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    toast(`Exported paths for ${selected.size} selected exposure${selected.size === 1 ? "" : "s"}`);
+  } catch (err) { alert(err.message); }
+};
 $("#selTag").onclick = async () => {
   if (!selected.size) return;
   const t = prompt(`Tag for the ${selected.size} selected photo${selected.size === 1 ? "" : "s"} (start with - to remove a tag):`);
