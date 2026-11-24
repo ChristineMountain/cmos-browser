@@ -31,9 +31,28 @@ fi
 # Also check the pid really is our app.py: after a container restart the old pid may belong to something else.
 running() { [[ -f $PIDFILE ]] && kill -0 "$(cat $PIDFILE)" 2>/dev/null && grep -qa app.py "/proc/$(cat $PIDFILE)/cmdline" 2>/dev/null; }
 
+# A watchdog runs for weeks with the code it was started with. If it called us and run.sh has
+# changed since it started, replace it with a fresh one. Watchdogs from older versions keep
+# their old port and kill a healthy server over and over; they do run 'start' and 'update'
+# from disk, which is how this reaches them.
+renew_watchdog() {
+  local wd=$PPID age
+  tr '\0' ' ' < "/proc/$wd/cmdline" 2>/dev/null | grep -q "run.sh watchdog" || return 0
+  age=$(ps -o etimes= -p "$wd" 2>/dev/null | tr -d ' ') || return 0
+  [[ -n $age ]] || return 0
+  (( $(stat -c %Y "$0") > $(date +%s) - age )) || return 0
+  echo "$(date '+%F %T') replacing an out-of-date watchdog (pid $wd)" >> watchdog.log
+  kill "$wd" 2>/dev/null || return 0
+  exec 9>&-   # inherited from the old watchdog: it holds the single-instance lock
+  ( sleep 2; setsid "$0" watchdog ) < /dev/null > /dev/null 2>&1 &
+}
+
 case "${1:-}" in
   start)
+    renew_watchdog
     if running; then echo "Already running (pid $(cat $PIDFILE)) on port $PORT"; exit 0; fi
+    # A server that was just stopped can hold the port for a few seconds.
+    for _ in $(seq 10); do ss -ltn 2>/dev/null | grep -q ":$PORT " || break; sleep 1; done
     if ss -ltn 2>/dev/null | grep -q ":$PORT "; then echo "Port $PORT is in use by another program. Set another 'port = ...' in config.local.toml."; exit 1; fi
     # Low CPU (nice 10) and best-effort lowest disk priority: be kind to other users.
     # 9>&-: the server must not inherit the watchdog's lock, or a new watchdog could never start.
@@ -61,6 +80,7 @@ case "${1:-}" in
     echo "To revoke all unlocked browsers: rm edit_key.txt && ./run.sh restart"
     ;;
   update)
+    renew_watchdog
     # Never fatal: without network (or with local code changes) the current version keeps running.
     [[ -d .git ]] || { echo "Not installed from GitHub; nothing to update."; exit 0; }
     before=$(git rev-parse HEAD)
@@ -94,10 +114,17 @@ case "${1:-}" in
     exec 9> watchdog.lock
     flock -n 9 || { echo "Watchdog already running"; exit 0; }
     "$0" update >> watchdog.log 2>&1 || true
+    wd_started=$(date +%s)
     fails=3
     ticks=0
     while true; do
       ticks=$((ticks+1))
+      # run.sh changed on disk (an update pulled by 'open' or the installer, not by us): re-run
+      # ourselves so we never keep running old code.
+      if (( $(stat -c %Y "$0") > wd_started )); then
+        exec 9>&-
+        exec "$0" watchdog
+      fi
       if (( ticks % 5 == 0 )) && [[ -d .git ]]; then
         before=$(git rev-parse HEAD 2>/dev/null || true)
         out=$("$0" update 2>&1 || true)
@@ -107,11 +134,17 @@ case "${1:-}" in
           exec "$0" watchdog
         fi
       fi
+      # Re-read the port each time: a long-running watchdog must not keep checking a port
+      # the app has since moved away from (it would restart a healthy server forever).
+      p=$(sed -nE 's/^port *= *([0-9]+).*/\1/p' config.local.toml 2>/dev/null | tail -1)
+      [[ -n $p ]] && PORT=$p
       if curl -fs -m 10 "http://127.0.0.1:$PORT/api/stats" >/dev/null 2>&1; then fails=0
       else fails=$((fails+1)); fi
       if (( fails >= 3 )); then
         echo "$(date '+%F %T') server not responding, restarting" >> watchdog.log
         "$0" stop >> watchdog.log 2>&1 || true
+        # The old server may hold the port for a moment after it is stopped.
+        for _ in $(seq 10); do ss -ltn 2>/dev/null | grep -q ":$PORT " || break; sleep 1; done
         "$0" start >> watchdog.log 2>&1 || true
         fails=0
       fi
