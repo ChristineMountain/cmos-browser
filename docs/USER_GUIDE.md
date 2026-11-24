@@ -197,6 +197,11 @@ The header contains a back button, an "Open in viewer" link to the port-8003
 viewer (which supports astrometry and catalogs), and buttons for the previous
 and next exposure in the current list.
 
+Below the title is the path to the exposure on the server, for example
+`/storage/hdd/cmos/20260910/object00092_*`. Every file of the exposure is in
+that folder and starts with that name. **Copy folder** copies the folder path;
+**Copy file paths** copies the full path of every file, one per line.
+
 ### Toolbar
 
 | Control | Description |
@@ -233,6 +238,38 @@ image to the window (also on double-click), show it at 1:1, and zoom in. The
 readout in the lower right shows the sensor, pixel coordinates and value under
 the cursor; with binning, the value is the mean of the bin.
 
+#### RA and Dec
+
+The readout also shows the RA and Dec under the cursor (J2000/ICRS,
+sexagesimal and degrees).
+
+To keep a position, click on it (a click without dragging; dragging still
+pans). A ring marks the spot, and a "Pinned" box in the lower left shows its RA
+and Dec, which no longer change as you move the mouse. Use its Copy button or
+press `C` to copy them, and Remove to clear the pin. Clicking somewhere else
+moves the pin. The pin stays on its spot when you zoom, pan or change the bin.
+
+The coordinates are computed from where the telescope was pointed (the
+exposure's `_meta.json`, which is also what the WCS in newer FITS headers
+contains) and the fixed layout of the six sensors. This works for every night
+and for raw pack files. The few exposures with no pointing recorded show "no
+telescope pointing recorded" instead.
+
+How accurate they are: this is not a plate solve. Checked against
+astrometry.net solutions of 30 sensor frames from five nights, the coordinates
+are typically 10″ to 50″ off (about 40 to 200 pixels), shifted the same way for
+all six sensors of an exposure, because the telescope does not point exactly
+where it is told. They are good for knowing which part of the sky you are
+looking at, but not for picking out one star in a crowded field; use the
+port-8003 viewer's astrometry for that.
+
+### Smaller screens
+
+The layout adapts to the window size. On smaller screens the right-hand column
+gets narrower, and below about 900 pixels wide it moves under the image. The
+stretch controls also get narrower over a small image; close them with `S` when
+you need the whole image.
+
 ### Multi-frame exposures
 
 ![Frame controls](images/frames.jpg)
@@ -253,7 +290,10 @@ The panel on the right has four tabs:
 - **Header**: the FITS header of each sensor file, with a keyword filter.
 - **Telescope & weather**: the contents of `*_meta.json`, including capture
   settings, telescope samples taken during the exposure, and weather data.
-- **Files**: the files of the exposure with format, size and a download link.
+- **Files**: the files of the exposure with format, size, full path on the
+  server and a download link.
+
+The whole right-hand side scrolls as one, so scroll down to see all of a tab.
 
 <br clear="right">
 
@@ -336,8 +376,22 @@ for the person who owns the collection.
 |---|---|
 | Original files | Files tab of an exposure |
 | File paths of a collection | Open the collection, then Export file list |
+| File paths of the current search | Gallery toolbar, Export paths… |
 | Exposures marked as Junk | Filter panel, Download the junk list |
 | All annotations (CSV) | `http://localhost:PORT/api/annotations/export.csv` |
+
+**Export paths…** downloads a text file listing everything that matches the
+current search and filters, including results not yet loaded with "Load
+more". Choose **Every file** for the full path of each file (and its
+`_meta.json`), or **Folders only** for each folder once. Send this file to
+coworkers so they know where to find the data.
+
+Opening these files in DS9: plain `.fits` files (September 2026 onward) open
+directly. Files ending in `.zst` are compressed and DS9 cannot read them;
+decompress a copy first, for example
+`unzstd -c /storage/hdd/cmos/20260415/object00012_1.fits.zst > ~/object00012_1.fits`
+(about 50 MB per frame, so multi-frame files can be several GB). Raw pack files
+(`.hpkcmos-pack`) are not FITS and do not open in DS9.
 
 The junk list contains every exposure that someone marked as Junk, who marked
 it, who disagreed, and the full file paths. Disagreements are listed first.
@@ -359,6 +413,7 @@ On the exposure page:
 | `S` | Toggle stretch controls |
 | `[`, `]` | Previous or next frame |
 | `P` | Play or pause frames |
+| `C` | Copy the pinned RA/Dec (or the one under the cursor) |
 
 See [Triage](#triage) for the triage keys.
 

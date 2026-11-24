@@ -351,17 +351,43 @@ def clean_tag(t):
 IN_COLLECTION = "EXISTS (SELECT 1 FROM u.collection_items ci WHERE ci.collection_id = ? AND ci.folder = e.folder AND ci.prefix = e.prefix)"
 
 
-@app.get("/api/exposures")
-def exposures(
-    request: Request, q: str | None = None, night: str | None = None, object: str | None = None,
+class ExposureFilter(BaseModel):
+    """The gallery's search and filters, shared by the gallery and its path export."""
+    q: str | None = None
+    night: str | None = None
+    object: str | None = None
+    filter: str | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    exp_min: float | None = None
+    exp_max: float | None = None
+    mode: str | None = None
+    kind: str | None = None
+    sort: str = "newest"
+    collection: int | None = None
+    rating: int | None = None
+    has_note: bool = False
+    tag: list[str] = []
+    verdict: str | None = None
+
+
+def exposure_filter(
+    q: str | None = None, night: str | None = None, object: str | None = None,
     filter: str | None = None, date_from: str | None = None, date_to: str | None = None,
     exp_min: float | None = None, exp_max: float | None = None, mode: str | None = None,
     kind: str | None = Query(None, pattern="^(fits|raw)$"), sort: str = "newest",
     collection: int | None = None, rating: int | None = Query(None, ge=0, le=5),
     has_note: bool = False, tag: list[str] = Query([]),
     verdict: str | None = Query(None, pattern="^(good|junk|unsure|none|todo)$"),
-    limit: int = Query(60, ge=1, le=500), offset: int = Query(0, ge=0),
 ):
+    return ExposureFilter(**{k: v for k, v in locals().items()})
+
+
+def filter_sql(request, f):
+    """(FROM clause, WHERE clause, params, ORDER BY, extra leading params for 'added' sort)."""
+    q, night, object, filter, verdict, sort = f.q, f.night, f.object, f.filter, f.verdict, f.sort
+    date_from, date_to, exp_min, exp_max, mode, kind = f.date_from, f.date_to, f.exp_min, f.exp_max, f.mode, f.kind
+    collection, rating, has_note, tag = f.collection, f.rating, f.has_note, f.tag
     where, p = [], []
     # The search box understands tag:cloudy, tag:"satellite trail", verdict:junk and night:20260914.
     tags = list(tag)
@@ -425,6 +451,13 @@ def exposures(
         sort = "newest"
     added = ("(SELECT ci.added FROM u.collection_items ci WHERE ci.collection_id = ? "
              "AND ci.folder = e.folder AND ci.prefix = e.prefix)") if sort == "added" else "NULL"
+    return frm, w, p, SORTS.get(sort, SORTS["newest"]), added, ([collection] if sort == "added" else [])
+
+
+@app.get("/api/exposures")
+def exposures(request: Request, f: ExposureFilter = Depends(exposure_filter),
+              limit: int = Query(60, ge=1, le=500), offset: int = Query(0, ge=0)):
+    frm, w, p, order, added, pre = filter_sql(request, f)
     total = rows(f"SELECT count(*) AS n {frm} {w}", p)[0]["n"]
     items = rows(f"""SELECT e.id, e.folder, e.prefix, e.night, e.object, e.filter, e.filter_norm, e.exptime,
                             e.exptime_src, e.nexp, e.n_frames, e.mode, e.start_utc, e.start_local, e.n_sensors,
@@ -437,8 +470,8 @@ def exposures(
                                WHERE x.folder = e.folder AND x.prefix = e.prefix AND x.verdict IS NOT NULL) AS verdicts,
                             (SELECT count(*) FROM u.collection_items ci WHERE ci.folder = e.folder AND ci.prefix = e.prefix) AS n_collections,
                             {added} AS ci_added
-                     {frm} {w} ORDER BY {SORTS.get(sort, SORTS['newest'])} LIMIT ? OFFSET ?""",
-                 ([collection] if sort == "added" else []) + p + [limit, offset])
+                     {frm} {w} ORDER BY {order} LIMIT ? OFFSET ?""",
+                 pre + p + [limit, offset])
     for it in items:
         it["tags"] = it["tags"].split("\x1f") if it["tags"] else []
         vs = it["verdicts"].split("\x1f") if it["verdicts"] else []
@@ -447,6 +480,38 @@ def exposures(
         for it in items:
             it["preview_shared"] = bool(preview_files(it["id"], request))
     return {"total": total, "items": items}
+
+
+def exposure_paths(con, eid, folder, prefix):
+    """Every original file of one exposure: its meta.json (if any), then the image files."""
+    meta = os.path.join(CFG["data_root"], folder, prefix + cd.META_SUFFIX)
+    return ([meta] if os.path.exists(meta) else []) + [
+        r["path"] for r in con.execute("SELECT path FROM files WHERE exposure_id=? ORDER BY sensor, format", (eid,))]
+
+
+@app.get("/api/exposures/export.txt")
+def export_exposures(request: Request, f: ExposureFilter = Depends(exposure_filter),
+                     only: str = Query("all", pattern="^(all|folders)$")):
+    """Plain-text list of the original file paths of everything the gallery shows
+    for these filters (all pages, not only the loaded ones). only=folders lists
+    each folder once instead."""
+    frm, w, p, order, added, pre = filter_sql(request, f)
+    items = rows(f"SELECT e.id, e.folder, e.prefix, {added} AS ci_added {frm} {w} ORDER BY {order}", pre + p)
+    shown = {k: v for k, v in f.model_dump().items() if v not in (None, "", [], False) and k != "sort"}
+    desc = ", ".join(f"{k}={'/'.join(v) if isinstance(v, list) else v}" for k, v in shown.items()) or "everything"
+    lines = [f"# CMOS Browser export: {desc}",
+             f"# {len(items)} exposures; " + ("one folder per line" if only == "folders" else "one original file path per line"),
+             ""]
+    if only == "folders":
+        lines += list(dict.fromkeys(os.path.join(CFG["data_root"], it["folder"]) for it in items))
+    else:
+        with db() as con:
+            for it in items:
+                lines += exposure_paths(con, it["id"], it["folder"], it["prefix"])
+    name = "cmos-" + ("-".join(str(v) for v in shown.values() if not isinstance(v, list)) or "all")
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)[:80]
+    return Response("\n".join(lines) + "\n", media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{safe}{"-folders" if only == "folders" else ""}.txt"'})
 
 
 def user_info(e, user):
@@ -470,6 +535,7 @@ def user_info(e, user):
 def exposure(eid: int, request: Request):
     e = get_exposure(eid)
     e["files"] = get_files(eid)
+    e["dir"] = os.path.join(CFG["data_root"], e["folder"])
     for f in e["files"]:
         f["shared"] = bool(f["readable"]) and shared_ok(request, f["path"])
     e["restricted"] = restricted(request)
@@ -693,6 +759,11 @@ def pixels(eid: int, request: Request, sensor: str = "all", frame: int = Query(0
         except Exception as ex:
             raise HTTPException(500, f"cannot read image: {ex}")
     img, layout = cd.mosaic(tiles, b)
+    for t in layout:  # no WCS in the file: the same one from the exposure's pointing
+        t["wcs_src"] = "header" if t["wcs"] else None
+        if not t["wcs"]:
+            t["wcs"] = cd.pointing_wcs(t["sensor"], e["ra"], e["dec"])
+            t["wcs_src"] = "pointing" if t["wcs"] else None
     finite = np.isfinite(img)
     lo, hi = (float(img[finite].min()), float(img[finite].max())) if finite.any() else (0.0, 1.0)
     scale = min(64.0, 65534.0 / max(hi - lo, 1e-6))
@@ -843,13 +914,10 @@ def export_collection(cid: int):
     with db() as con:
         for it in items:
             e = con.execute("SELECT id FROM exposures WHERE folder=? AND prefix=?", (it["folder"], it["prefix"])).fetchone()
-            meta = os.path.join(CFG["data_root"], it["folder"], it["prefix"] + cd.META_SUFFIX)
             if not e:
                 lines.append(f"# not in index any more: {it['folder']}/{it['prefix']}")
                 continue
-            if os.path.exists(meta):
-                lines.append(meta)
-            lines += [f["path"] for f in con.execute("SELECT path FROM files WHERE exposure_id=? ORDER BY sensor, format", (e["id"],))]
+            lines += exposure_paths(con, e["id"], it["folder"], it["prefix"])
     safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in c["name"])[:60] or "collection"
     return Response("\n".join(lines) + "\n", media_type="text/plain; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{safe}.txt"'})

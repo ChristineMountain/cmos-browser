@@ -13,7 +13,7 @@
 <body>
 <header class="topbar">
   <button class="icon-btn only-narrow" id="menuBtn" title="Filters" aria-label="Filters">☰</button>
-  <a class="brand" href="#/"><span class="logo"></span>CMOS&nbsp;Browser</a>
+  <a class="brand" href="#/"><span class="logo"></span><span class="brand-name">CMOS&nbsp;Browser</span></a>
   <div class="search">
     <input id="q" type="search" placeholder="Search object, filter, file…" autocomplete="off">
   </div>
@@ -83,6 +83,11 @@
       <div class="chips" id="chips"></div>
       <div class="spacer"></div>
       <span class="muted" id="count"></span>
+      <select id="exportSel" title="Download a text file listing where the files shown here are on the server (all matches, not only the ones loaded)">
+        <option value="">Export paths…</option>
+        <option value="all">Every file (.txt)</option>
+        <option value="folders">Folders only (.txt)</option>
+      </select>
       <button class="btn primary edit-only" id="triageBtn" title="Go through the photos shown here that you haven't judged yet, one at a time">Triage</button>
       <button class="btn edit-only" id="selectBtn" title="Select several exposures to organize them">Select</button>
       <select id="sort" title="Sort">
@@ -119,13 +124,14 @@
     <div class="detail-title">
       <div id="dTitle" class="title"></div>
       <div id="dSub" class="muted small"></div>
+      <div id="dPath" class="crumbs" title="Where this exposure's files are on the server"></div>
     </div>
     <div class="spacer"></div>
     <div class="triage-bar" id="triageBar" hidden>
       <b>Triage</b> <span id="triageLeft" class="muted"></span>
       <span class="keys"><kbd>G</kbd> good <kbd>J</kbd> junk <kbd>U</kbd> unsure <kbd>T</kbd> tag <kbd>→</kbd> skip <kbd>Esc</kbd> stop</span>
     </div>
-    <a class="btn ext-btn" id="viewerBtn" target="_blank" rel="noopener" hidden title="Open this exposure in the image viewer on port 8003 (new tab)">Open in viewer ↗</a>
+    <a class="btn ext-btn" id="viewerBtn" target="_blank" rel="noopener" hidden title="Open this exposure in the image viewer on port 8003 (new tab)"><span class="ext-long">Open in </span>viewer ↗</a>
     <button class="icon-btn" id="prevBtn" title="Previous exposure (←)" aria-label="Previous">‹</button>
     <button class="icon-btn" id="nextBtn" title="Next exposure (→)" aria-label="Next">›</button>
   </header>
@@ -183,11 +189,20 @@
             <button class="icon-btn sm" id="zoom1" title="Reset zoom: 1 image pixel per screen pixel">1:1</button>
             <button class="icon-btn sm" id="zoomIn" title="Zoom in">+</button>
           </span>
+          <div class="pin-box" id="pinBox" hidden>
+            <div class="pin-head"><b>📍 Pinned</b><span id="pinWhere"></span></div>
+            <div><span>RA</span><b id="pinRA"></b></div>
+            <div><span>Dec</span><b id="pinDec"></b></div>
+            <div class="pin-btns"><button id="pinCopy" title="Copy RA and Dec (C)">Copy</button><button id="pinClear" title="Remove the pin">Remove</button></div>
+          </div>
+          <span class="hud-gap"></span>
           <div class="pixel-info" id="vReadout" hidden>
             <div><span>Sensor</span><b id="piSensor"></b></div>
             <div><span>Pixel</span><b id="piPixel"></b></div>
             <div><span>Value</span><b id="piValue"></b></div>
+            <div id="piSky" title="From the WCS in this sensor's FITS header (J2000/ICRS)"><span>RA</span><b id="piRA"></b><span>Dec</span><b id="piDec"></b></div>
             <div class="pi-note" id="piNote"></div>
+            <div class="pi-note" id="piCopy">click to pin RA/Dec</div>
           </div>
         </div>
       </div>

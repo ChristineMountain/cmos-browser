@@ -281,6 +281,17 @@ function renderChips(params) {
 const PAGE = 60;
 let galleryState = { key: null, offset: 0, total: 0, loading: false };
 
+$("#exportSel").onchange = (ev) => {
+  const only = ev.target.value;
+  ev.target.value = "";
+  if (!only) return;
+  const p = new URLSearchParams(apiQuery(new URLSearchParams(galleryHash.split("?")[1] || ""), 0).split("?")[1]);
+  p.delete("limit"); p.delete("offset");
+  p.set("only", only);
+  location.href = "/api/exposures/export.txt?" + p;
+  toast(`Exporting paths for ${fmt.num(galleryState.total)} exposure${galleryState.total === 1 ? "" : "s"}`);
+};
+
 function apiQuery(params, offset) {
   const p = new URLSearchParams();
   for (const k of KEYS) {
@@ -589,6 +600,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "[" || e.key === "]") { if (!$("#frameBar").hidden) $(e.key === "[" ? "#fPrev" : "#fNext").click(); return; }
   if (e.key.toLowerCase() === "p") { if (!$("#frameBar").hidden) $("#fPlay").click(); return; }
   if (e.key.toLowerCase() === "a") { if (px) applyPreset("auto"); return; }
+  if (e.key.toLowerCase() === "c") { copySky(); return; }
   if (e.key.toLowerCase() === "s") { if (cur && cur.preview_sensors.length) togglePanel(); return; }
   if (e.key === "Escape") { if (triage.on) stopTriage(); $("#closeBtn").click(); }
   else if (triage.on && e.key === "ArrowRight" && cur) { triage.skipped.add(cur.id); triageNext(cur.id); }
@@ -622,7 +634,8 @@ async function openDetail(id) {
   const sameExposure = cur && cur.id === e.id;
   cur = e;
   $("#dTitle").innerHTML = `${e.object ? esc(e.object) : "<span class='muted'>(no object)</span>"} ${filterBadge(e.filter_norm)}`;
-  $("#dSub").textContent = `${fmt.night(e.night)} · ${fmt.dt(e.start_utc)} UTC · ${e.folder}/${e.prefix}`;
+  $("#dSub").textContent = `${fmt.night(e.night)} · ${fmt.dt(e.start_utc)} UTC`;
+  renderPath(e);
   const vu = viewerUrl(e);
   $("#viewerBtn").hidden = !vu;
   if (vu) $("#viewerBtn").href = vu;
@@ -810,6 +823,29 @@ function renderSummary(e) {
   $("#summary").innerHTML = kvRows(rows);
 }
 
+// Breadcrumb of the folder on the server, then the exposure's file name prefix.
+function renderPath(e) {
+  const parts = e.dir.split("/").filter(Boolean);
+  $("#dPath").innerHTML = `<span class="sep">/</span>` +
+    parts.map((x, i) => `<span${i === parts.length - 1 ? ` class="leaf"` : ""}>${esc(x)}</span><span class="sep">/</span>`).join("") +
+    `<span class="leaf">${esc(e.prefix)}</span><span class="sep">_*</span>` +
+    `<button class="copy-btn" id="copyDir" title="Copy the folder path">Copy folder</button>` +
+    `<button class="copy-btn" id="copyFiles" title="Copy the full path of every file of this exposure, one per line">Copy file paths</button>`;
+  $("#copyDir").onclick = (ev) => copyText(e.dir, ev.target);
+  $("#copyFiles").onclick = (ev) => copyText(e.files.map((f) => f.path).join("\n"), ev.target);
+}
+// Copy, and say so on the element that asked (falls back to a box to copy from).
+function copyText(text, el) {
+  const fallback = () => prompt("Copy with Ctrl+C:", text);
+  if (!navigator.clipboard) return fallback();
+  navigator.clipboard.writeText(text).then(() => {
+    if (!el.dataset.label) el.dataset.label = el.textContent;
+    el.textContent = "Copied ✓";
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.textContent = el.dataset.label, 1500);
+  }, fallback);
+}
+
 function renderFiles(e) {
   const big = e.files.some((f) => f.size > 5e9);
   $("#filesBody").innerHTML = `
@@ -819,7 +855,8 @@ function renderFiles(e) {
     ${e.files.map((f) => `<tr><td>${f.sensor}</td><td class="mono">${esc(f.format)}</td><td class="r">${fmt.bytes(f.size)}</td>
       <td>${!f.readable ? `<span class="muted small">no read access</span>`
         : !f.shared ? `<span class="muted small" title="Not readable by every account on the server">owner only</span>`
-        : `<a class="dl" href="/api/files/${f.id}/download" download>Download</a>`}</td></tr>`).join("")}
+        : `<a class="dl" href="/api/files/${f.id}/download" download>Download</a>`}</td></tr>
+      <tr><td></td><td colspan="3" class="path">${esc(f.path)}</td></tr>`).join("")}
     </tbody></table>`;
 }
 
@@ -916,6 +953,7 @@ function setupViewer(e) {
   levels.preset = "auto"; // every exposure opens auto-stretched (gamma and invert are kept)
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   $("#vReadout").hidden = true;
+  setPin(null);
   const sensors = e.preview_sensors;
   const controls = $$(".viewer-controls select, .viewer-controls input, .viewer-controls button, .stretch-panel input, .sp-btn, .frame-bar input, .frame-bar button");
   $(".viewer-controls").hidden = $(".zoom-btns").hidden = $("#frameBar").hidden = !sensors.length;
@@ -1230,6 +1268,16 @@ function draw() {
       ctx.fillStyle = "#cfd6ea"; ctx.fillText(`S${t.sensor}`, x, y);
     }
   }
+  const ps = pinScreen();
+  if (ps) {  // pinned spot: a ring with a gap in the middle, so the star stays visible
+    const [x, y] = ps;
+    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,.7)";
+    ctx.beginPath(); ctx.arc(x, y, 11, 0, 2 * Math.PI); ctx.stroke();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = "#41c9f0";
+    ctx.beginPath(); ctx.arc(x, y, 11, 0, 2 * Math.PI);
+    for (const [a, b] of [[[x - 20, y], [x - 14, y]], [[x + 14, y], [x + 20, y]], [[x, y - 20], [x, y - 14]], [[x, y + 14], [x, y + 20]]]) { ctx.moveTo(...a); ctx.lineTo(...b); }
+    ctx.stroke();
+  }
 }
 
 function fit() {
@@ -1269,15 +1317,23 @@ $("#zoom1").onclick = () => {
 
 let drag = null;
 viewer.addEventListener("pointerdown", (e) => {
-  if (e.target.closest("button, .stretch-panel")) return;
-  drag = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty };
+  if (e.target.closest("button, .stretch-panel, .pin-box")) return;
+  drag = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty, moved: false };
   viewer.setPointerCapture(e.pointerId);
   viewer.classList.add("dragging");
 });
-viewer.addEventListener("pointerup", () => { drag = null; viewer.classList.remove("dragging"); });
+viewer.addEventListener("pointerup", (e) => {
+  if (drag && !drag.moved) {  // a click, not a pan: pin the sky position there
+    const r = viewer.getBoundingClientRect(), p = skyAt(e.clientX - r.left, e.clientY - r.top);
+    if (p) setPin(p);
+  }
+  drag = null;
+  viewer.classList.remove("dragging");
+});
 viewer.addEventListener("pointermove", (e) => {
   const r = viewer.getBoundingClientRect();
-  if (drag) {
+  if (drag && !drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 4) drag.moved = true;
+  if (drag && drag.moved) {
     view.tx = drag.tx + e.clientX - drag.x;
     view.ty = drag.ty + e.clientY - drag.y;
     view.fitted = false;
@@ -1287,6 +1343,70 @@ viewer.addEventListener("pointermove", (e) => {
   readout(e.clientX - r.left, e.clientY - r.top);
 });
 viewer.addEventListener("pointerleave", () => $("#vReadout").hidden = true);
+
+// ---- sky coordinates: invert the TAN (gnomonic) WCS of the sensor's FITS header.
+// p1, p2 are FITS pixel coordinates (1-based, pixel centres on whole numbers).
+function tanPixToSky(w, p1, p2) {
+  const d = Math.PI / 180;
+  const dx = p1 - w.crpix[0], dy = p2 - w.crpix[1];
+  const xi = (w.cd[0][0] * dx + w.cd[0][1] * dy) * d, eta = (w.cd[1][0] * dx + w.cd[1][1] * dy) * d;
+  const a0 = w.crval[0] * d, d0 = w.crval[1] * d;
+  const den = Math.cos(d0) - eta * Math.sin(d0);
+  let ra = (a0 + Math.atan2(xi, den)) / d;
+  const dec = Math.atan2(Math.sin(d0) + eta * Math.cos(d0), Math.hypot(xi, den)) / d;
+  ra = ((ra % 360) + 360) % 360;
+  return [ra, dec];
+}
+function sexa(v, hours) {
+  const sign = v < 0 ? "-" : hours ? "" : "+";
+  let x = Math.abs(v) / (hours ? 15 : 1);
+  const dp = hours ? 2 : 1;  // 0.01 s of RA ≈ 0.15", 0.1" of Dec
+  let a = Math.floor(x), b = Math.floor((x - a) * 60), c = ((x - a) * 60 - b) * 60;
+  if (+c.toFixed(dp) >= 60) { c = 0; b += 1; }
+  if (b >= 60) { b = 0; a += 1; }
+  if (hours && a >= 24) a -= 24;
+  const p2 = (n) => String(n).padStart(2, "0");
+  return `${sign}${p2(a)}:${p2(b)}:${c.toFixed(dp).padStart(3 + dp, "0")}`;
+}
+let skyNow = null;  // "hh:mm:ss.ss +dd:mm:ss.s" under the mouse; the C key copies it
+let pin = null;      // pinned spot: {sensor, ex, ey (full-res pixel edges), ra, dec}
+function copySky() {
+  if (pin) copyText(pinText(), $("#pinCopy"));
+  else if (skyNow && !$("#vReadout").hidden) copyText(skyNow, $("#piCopy"));
+}
+const pinText = () => `${sexa(pin.ra, true)} ${sexa(pin.dec, false)}`;
+// Sky position under a point of the viewer (CSS px), or null outside a sensor with a WCS.
+function skyAt(mx, my) {
+  if (!px) return null;
+  const bx = (mx - view.tx) / view.scale, by = (my - view.ty) / view.scale;
+  const t = px.layout.find((t) => bx >= t.x0 && bx < t.x0 + t.w && by >= t.y0 && by < t.y0 + t.h);
+  if (!t || !t.wcs) return null;
+  const u = bx - t.x0, w = by - t.y0;
+  const ex = (t.rot180 ? t.w - u : u) * px.bin, ey = (t.rot180 ? t.h - w : w) * px.bin;
+  const [ra, dec] = tanPixToSky(t.wcs, ex + 0.5, ey + 0.5);
+  return { sensor: t.sensor, ex, ey, ra, dec };
+}
+// Click (without dragging) on the image: pin that spot, so its RA/Dec can be read and copied.
+function setPin(p) {
+  pin = p;
+  $("#pinBox").hidden = !pin;
+  if (pin) {
+    $("#pinRA").textContent = `${sexa(pin.ra, true)}  ${pin.ra.toFixed(5)}°`;
+    $("#pinDec").textContent = `${sexa(pin.dec, false)}  ${pin.dec.toFixed(5)}°`;
+    $("#pinWhere").textContent = `sensor ${pin.sensor} (${Math.floor(pin.ex)}, ${Math.floor(pin.ey)})`;
+  }
+  draw();
+}
+$("#pinCopy").onclick = () => pin && copyText(pinText(), $("#pinCopy"));
+$("#pinClear").onclick = () => setPin(null);
+// Where the pin is on screen now (it follows zoom, pan, bin and sensor changes).
+function pinScreen() {
+  const t = pin && px && px.layout.find((t) => t.sensor === pin.sensor);
+  if (!t) return null;
+  const u = pin.ex / px.bin, w = pin.ey / px.bin;
+  const bx = t.x0 + (t.rot180 ? t.w - u : u), by = t.y0 + (t.rot180 ? t.h - w : w);
+  return [view.tx + bx * view.scale, view.ty + by * view.scale];
+}
 
 function readout(mx, my) {
   if (!px) return;
@@ -1301,6 +1421,18 @@ function readout(mx, my) {
   $("#piSensor").textContent = t.sensor;
   $("#piPixel").textContent = `(${fx}, ${fy})`;
   $("#piValue").textContent = v === v ? v.toFixed(2) : "—";
+  // RA/Dec at the exact mouse position (not the binned block's corner).
+  skyNow = null;
+  if (t.wcs) {
+    const u = (mx - view.tx) / view.scale - t.x0, w = (my - view.ty) / view.scale - t.y0;
+    const ex = (t.rot180 ? t.w - u : u) * px.bin, ey = (t.rot180 ? t.h - w : w) * px.bin;
+    const [ra, dec] = tanPixToSky(t.wcs, ex + 0.5, ey + 0.5);
+    $("#piRA").textContent = `${sexa(ra, true)}  ${ra.toFixed(5)}°`;
+    $("#piDec").textContent = `${sexa(dec, false)}  ${dec.toFixed(5)}°`;
+    skyNow = `${sexa(ra, true)} ${sexa(dec, false)}`;
+  }
+  $("#piSky").hidden = !t.wcs;
+  $("#piCopy").textContent = t.wcs ? "click to pin RA/Dec" : "no telescope pointing recorded: no RA/Dec";
   $("#piNote").textContent = [px.bin > 1 ? `mean of ${px.bin}×${px.bin}` : "", $("#vFlat").checked ? "column-flattened" : ""].filter(Boolean).join(" · ");
   $("#vReadout").hidden = false;
 }
@@ -1346,6 +1478,13 @@ function togglePanel(open = $("#stretchPanel").hidden) {
   if (open) drawHist();
 }
 $("#spClose").onclick = () => togglePanel(false);
+// A panel dragged somewhere goes back to its corner if the window shrinks under it.
+new ResizeObserver(() => {
+  const pnl = $("#stretchPanel");
+  if (!pnl.style.left) return;
+  if (parseFloat(pnl.style.left) + pnl.offsetWidth > viewer.clientWidth || parseFloat(pnl.style.top) + 30 > viewer.clientHeight)
+    Object.assign(pnl.style, { left: "", top: "", right: "" });
+}).observe(viewer);
 $("#vPanelBtn").onclick = () => togglePanel();
 $("#spTitle").addEventListener("pointerdown", (e) => {
   if (e.target.closest("button")) return;
@@ -1390,7 +1529,7 @@ function renderSync(s) {
   const ago = st.last_ok ? Math.max(0, Math.round((Date.now() / 1000 - st.last_ok) / 60)) : null;
   const state = !st.enabled ? "not shared" : st.error ? "not synced" : ago === null ? "syncing…" : ago < 1 ? "synced" : `synced ${ago} min ago`;
   $("#whoBtn").hidden = false;
-  $("#whoBtn").textContent = `👤 ${s.user} · ${state}`;
+  $("#whoBtn").innerHTML = `👤<span class="who-name"> ${esc(s.user)}</span><span class="who-state"> · ${esc(state)}</span>`;
   $("#whoBtn").classList.toggle("warn", !!(st.enabled && st.error));
   $("#whoBtn").title = !st.enabled
     ? "Ratings and notes stay on this copy only (GitHub not set up; see README)."

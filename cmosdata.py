@@ -446,6 +446,50 @@ def bin_image(a, b):
     return (a.reshape(ny // b, b, nx // b, b).sum(axis=(1, 3), dtype=acc) / (b * b)).astype(np.float32)
 
 
+def tan_wcs(h):
+    """The simple TAN (gnomonic) WCS of a FITS image header, as a dict, or None.
+
+    Pixel coordinates are FITS 1-based (centre of the first pixel = 1.0). Only
+    RA---TAN / DEC--TAN with a CD matrix (or CDELT + PC) is understood, which is
+    what our files carry; anything else (or no WCS, as in raw pack files) is None.
+    """
+    if not hasattr(h, "get") or h.get("CTYPE1") != "RA---TAN" or h.get("CTYPE2") != "DEC--TAN":
+        return None
+    try:
+        if "CD1_1" in h or "CD2_2" in h:
+            cd = [[float(h.get("CD1_1", 0)), float(h.get("CD1_2", 0))],
+                  [float(h.get("CD2_1", 0)), float(h.get("CD2_2", 0))]]
+        else:
+            c1, c2 = float(h["CDELT1"]), float(h["CDELT2"])
+            pc = [[float(h.get("PC1_1", 1)), float(h.get("PC1_2", 0))],
+                  [float(h.get("PC2_1", 0)), float(h.get("PC2_2", 1))]]
+            cd = [[c1 * pc[0][0], c1 * pc[0][1]], [c2 * pc[1][0], c2 * pc[1][1]]]
+        w = {"crval": [float(h["CRVAL1"]), float(h["CRVAL2"])],
+             "crpix": [float(h["CRPIX1"]), float(h["CRPIX2"])], "cd": cd}
+    except (KeyError, TypeError, ValueError):
+        return None
+    return w if cd[0][0] * cd[1][1] - cd[0][1] * cd[1][0] != 0 else None
+
+
+# Every FITS header WCS we have is the exposure's pointing (meta.json ra/dec) as
+# CRVAL plus this fixed per-sensor geometry (same on every night). Exposures
+# whose files have no WCS (raw pack files, older nights) get the same thing
+# from their pointing. Scale 0.2272"/pixel; sensors 3-5 are rotated by 180°.
+_S = 6.3098299098e-05
+SENSOR_GEOMETRY = {
+    0: ([8530.5, 5008.533], -_S), 1: ([2730.5, 5008.533], -_S), 2: ([-3069.5, 5008.533], -_S),
+    3: ([-3069.5, 5008.533], _S), 4: ([2730.5, 5008.533], _S), 5: ([8530.5, 5008.533], _S),
+}
+
+
+def pointing_wcs(sensor, ra, dec):
+    """TAN WCS (as tan_wcs returns) for a sensor from the telescope pointing in degrees, or None."""
+    if ra is None or dec is None or sensor not in SENSOR_GEOMETRY:
+        return None
+    crpix, c = SENSOR_GEOMETRY[sensor]
+    return {"crval": [float(ra), float(dec)], "crpix": list(crpix), "cd": [[c, 0.0], [0.0, c]]}
+
+
 # Where each sensor sits on the sky, from the per-sensor WCS in the FITS headers
 # (identical on every night that has one; raw pack files have no WCS). Shown as
 # on the sky, north up and east left, like the CMOS Viewer: left to right
@@ -463,7 +507,8 @@ def mosaic(tiles, b):
     tiles: list of (sensor, binned array, ext header). Each array is in file
     order (row 0 first). Sensors not in SKY_ORDER go on the right, unrotated.
     Gaps are filled with NaN. Returns (image, [dict(sensor, x0, y0, w, h, bin,
-    rot180)]) in binned pixels, y measured from the top of the image.
+    rot180, wcs)]) in binned pixels, y measured from the top of the image;
+    wcs is the sensor's own TAN WCS from its header (see tan_wcs) or None.
     """
     rank = {s: i for i, s in enumerate(SKY_ORDER)}
     tiles = sorted(tiles, key=lambda t: (rank.get(t[0], len(rank)), t[0]))
@@ -472,12 +517,13 @@ def mosaic(tiles, b):
     w = sum(t[1].shape[1] for t in tiles) + gap * (len(tiles) - 1)
     img = np.full((h, w), np.nan, dtype=np.float32)
     layout, x = [], 0
-    for s, a, _ in tiles:
+    for s, a, hdr in tiles:
         rot = s in ROTATED_180
         if rot:
             a = a[::-1, ::-1]
         y0 = h - a.shape[0] if rot else 0  # partial ROI frames: keep row 0 on its own edge
         img[y0: y0 + a.shape[0], x: x + a.shape[1]] = a
-        layout.append({"sensor": s, "x0": x, "y0": y0, "w": a.shape[1], "h": a.shape[0], "bin": b, "rot180": rot})
+        layout.append({"sensor": s, "x0": x, "y0": y0, "w": a.shape[1], "h": a.shape[0], "bin": b, "rot180": rot,
+                       "wcs": tan_wcs(hdr)})
         x += a.shape[1] + gap
     return img, layout

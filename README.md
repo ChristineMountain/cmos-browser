@@ -244,6 +244,12 @@ The server is shared, so the application is deliberately conservative:
   `DDO51`); the original value is displayed.
 - Sensors are displayed in their on-sky arrangement (0, 3, 1, 4, 2, 5 from left
   to right, with 3 to 5 rotated by 180 degrees), derived from the WCS headers.
+- RA/Dec in the viewer: every FITS header WCS is the `_meta.json` pointing as
+  CRVAL plus a fixed per-sensor CRPIX/CD (`SENSOR_GEOMETRY` in `cmosdata.py`).
+  Files without a WCS (pack files, older nights) get the same WCS from the
+  pointing. Plate solves of 30 frames put it 10-50" from the true position.
+- The watchdog re-reads the port from `config.local.toml` on every check, so a
+  port change never makes it restart a healthy server.
 - Thumbnails subtract the median of each column. The viewer shows raw values
   unless "Flatten columns" is enabled. The data files are never modified.
 - Some files are not readable by all accounts (many June 2026 nights). These are
