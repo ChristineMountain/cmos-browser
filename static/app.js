@@ -15,12 +15,15 @@ async function api(path) {
 }
 
 // ------------------------------------------------------------------ formatting
+// Japanese mode follows Japanese conventions: 2026/09/10(木) 11:19:08, 2026年9月9日(水), 60秒.
+const JA = window.I18N?.lang === "ja";
+const WEEKDAY_JA = "日月火水木金土";
 const fmt = {
   exp(s) {
     if (s == null) return "—";
-    if (s >= 1) return `${+s.toPrecision(4)} s`;
-    if (s >= 1e-3) return `${+(s * 1e3).toPrecision(3)} ms`;
-    return `${+(s * 1e6).toPrecision(3)} µs`;
+    if (s >= 1) return JA ? `${+s.toPrecision(4)}秒` : `${+s.toPrecision(4)} s`;
+    if (s >= 1e-3) return JA ? `${+(s * 1e3).toPrecision(3)}ミリ秒` : `${+(s * 1e3).toPrecision(3)} ms`;
+    return JA ? `${+(s * 1e6).toPrecision(3)}マイクロ秒` : `${+(s * 1e6).toPrecision(3)} µs`;
   },
   bytes(b) {
     if (b == null) return "—";
@@ -31,7 +34,22 @@ const fmt = {
   },
   num: (n) => (n == null ? "—" : Number(n).toLocaleString()),
   time: (iso) => (iso ? iso.slice(11, 16) : "—"),
-  dt: (iso) => (iso ? iso.replace("T", " ").slice(0, 19) : "—"),
+  dt(iso) {
+    if (!iso) return "—";
+    const s = iso.replace("T", " ").slice(0, 19);
+    if (!JA) return s;
+    const wd = WEEKDAY_JA[new Date(s.slice(0, 10) + "T12:00:00Z").getUTCDay()];
+    return `${s.slice(0, 10).replaceAll("-", "/")}(${wd}) ${s.slice(11)}`;
+  },
+  // compact date for gallery cards: 2026-09-09, or 2026/09/09 in Japanese
+  day: (d) => (d && JA ? d.replaceAll("-", "/") : d || ""),
+  // a UTC timestamp shifted to Japan Standard Time (UTC+9, no daylight saving)
+  jst(iso) {
+    if (!iso) return "—";
+    const t = new Date(iso.replace(" ", "T").slice(0, 19) + "Z");
+    if (isNaN(t)) return "—";
+    return fmt.dt(new Date(t.getTime() + 9 * 3600e3).toISOString());
+  },
   night(n) {
     if (!n) return "—";
     const d = new Date(n + "T12:00:00Z");
@@ -264,7 +282,7 @@ function renderChips(params) {
   const label = {
     q: (v) => `“${v}”`, night: (v) => fmt.night(v),
     object: (v) => v === "__none__" ? "No object name" : (objectsData.find((o) => o.key === v)?.name || v),
-    filter: (v) => `Filter ${v}`, date_from: (v) => `From ${v}`, date_to: (v) => `To ${v}`,
+    filter: (v) => `Filter ${v}`, date_from: (v) => `From ${fmt.night(v)}`, date_to: (v) => `To ${fmt.night(v)}`,
     exp_min: (v) => `Exp ≥ ${v} s`, exp_max: (v) => `Exp ≤ ${v} s`, mode: (v) => `Mode ${v}`,
     kind: (v) => (v === "fits" ? "FITS only" : "Raw only"),
     collection: (v) => `📁 ${collectionsData.find((c) => String(c.id) === v)?.name || "Collection " + v}`,
@@ -358,7 +376,7 @@ function cardHTML(e) {
       <div class="card-meta">
         <span title="Exposure time${e.exptime_src === "derived" ? " (derived from NEXP)" : ""}">⏱ ${fmt.exp(e.exptime)}</span>
         <span title="Start (UTC)">${fmt.time(e.start_utc)} UT</span>
-        <span>${esc(e.night || "")}</span>
+        <span>${esc(fmt.day(e.night))}</span>
         <span title="${esc(e.folder)}/${esc(e.prefix)}">${esc(e.prefix.replace(/^object0*/, "#"))}</span>
         ${viewerCfg.url ? `<span class="ext" role="link" tabindex="0" data-folder="${esc(e.folder)}" data-prefix="${esc(e.prefix)}" title="Open in the port-8003 viewer (new tab)">Viewer ↗</span>` : ""}
       </div>
@@ -822,6 +840,7 @@ function renderSummary(e) {
     ["Night", fmt.night(e.night)],
     ["Start (UTC)", fmt.dt(e.start_utc)],
     ["Start (local, MST)", fmt.dt(e.start_local)],
+    ...(JA ? [["開始（日本時間 JST）", fmt.jst(e.start_utc)]] : []),
     ["Exposure time", `${fmt.exp(e.exptime)}${e.exptime_src === "derived" ? ` <span class="muted">(NEXP × line time)</span>` : ""}`],
     ["NEXP", fmt.num(e.nexp)],
     ["Frames", frames],
