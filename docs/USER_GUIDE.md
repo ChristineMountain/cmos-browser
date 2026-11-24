@@ -121,8 +121,12 @@ address (for example `http://localhost:8203/`); `~/cmos-browser/run.sh status`
 prints yours.
 
 The top bar contains the search field, the number of indexed exposures (hover
-to see when the index was last updated), your sync status, a Share button, and
-a light/dark theme toggle.
+to see when the index was last updated), your sync status, a Share button, a
+language button, and a light/dark theme toggle.
+
+The language button switches the interface between English and Japanese
+(日本語). The choice is remembered in your browser. Data such as object names,
+tags, notes and FITS headers is always shown as recorded.
 
 The sync status shows your GitHub username and the time of the last successful
 sync. Click it to sync immediately. It is shown in red if the last sync failed;

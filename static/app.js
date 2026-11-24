@@ -35,7 +35,7 @@ const fmt = {
   night(n) {
     if (!n) return "—";
     const d = new Date(n + "T12:00:00Z");
-    return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+    return d.toLocaleDateString(window.I18N?.locale, { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
   },
   sexa(deg, hours) {
     if (deg == null) return "—";
@@ -109,7 +109,7 @@ async function loadStats() {
     $("#dNote").readOnly = !canEdit;
     $("#dNote").placeholder = canEdit ? "Your notes on this exposure… (saved automatically)" : "No notes";
     $("#stats").textContent = `${fmt.num(s.exposures)} exposures · ${s.nights} nights · ${fmt.bytes(s.bytes)}`;
-    const upd = s.last_indexed ? new Date(s.last_indexed * 1000).toLocaleString() : "unknown";
+    const upd = s.last_indexed ? new Date(s.last_indexed * 1000).toLocaleString(window.I18N?.locale) : "unknown";
     $("#stats").title = `Index last updated: ${upd}` + (s.auto_refresh_minutes ? `\nChecks for new data every ${s.auto_refresh_minutes} min` : "");
     // The app updates itself from GitHub; offer a reload when the server runs newer code.
     seenVersion ??= s.version;
