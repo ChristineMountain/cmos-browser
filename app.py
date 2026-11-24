@@ -945,10 +945,18 @@ def export_selected(body: ExportSelected):
         else:
             for it in items:
                 paths = exposure_paths(con, it["id"], it["folder"], it["prefix"])
-                lines += [x for x in paths if x.endswith(".zst")] if body.only == "zst" else paths
+                if body.only == "zst":
+                    zst = [x for x in paths if x.endswith(".zst")]
+                    if not zst:  # say so, rather than leave the exposure out silently
+                        kinds = sorted({x.rsplit("_", 1)[-1].split(".", 1)[-1] for x in paths if not x.endswith("_meta.json")})
+                        lines.append(f"# {it['folder']}/{it['prefix']}: no .zst files"
+                                     + (f" (has {', '.join(kinds)})" if kinds else " (no image files)"))
+                    paths = zst
+                lines += paths
+    n_paths = sum(1 for x in lines if x.startswith("/"))
     name = f"cmos-selected-{len(items)}" + ("" if body.only == "all" else "-" + body.only)
     return Response("\n".join(lines) + "\n", media_type="text/plain; charset=utf-8",
-                    headers={"Content-Disposition": f'attachment; filename="{name}.txt"'})
+                    headers={"Content-Disposition": f'attachment; filename="{name}.txt"', "X-Path-Count": str(n_paths)})
 
 
 @app.put("/api/exposures/{eid}/annotation", dependencies=[Depends(require_edit)])

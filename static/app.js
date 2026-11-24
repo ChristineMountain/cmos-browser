@@ -473,6 +473,12 @@ $("#selExport").onchange = async (ev) => {
       body: JSON.stringify({ exposure_ids: [...selected], only }),
     });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    if (r.headers.get("X-Path-Count") === "0") {
+      alert(only === "zst"
+        ? "None of the selected exposures have .zst files. Some nights were stored uncompressed (.fits, .hpkcmos-pack). Choose \"Every file\" to get their paths."
+        : "The selected exposures have no files on the server.");
+      return;
+    }
     const name = (r.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || "cmos-selected.txt";
     const a = document.createElement("a");
     a.href = URL.createObjectURL(await r.blob());

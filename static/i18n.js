@@ -355,6 +355,9 @@
     "Create": "作成",
     "Save": "保存",
     "Copy with Ctrl+C:": "Ctrl+C でコピーしてください:",
+    "None of the selected exposures have .zst files. Some nights were stored uncompressed (.fits, .hpkcmos-pack). Choose \"Every file\" to get their paths.":
+      "選択した露光には .zst ファイルがありません。非圧縮 (.fits, .hpkcmos-pack) で保存された夜もあります。パスを取得するには「全ファイル」を選んでください。",
+    "The selected exposures have no files on the server.": "選択した露光にはサーバー上のファイルがありません。",
 
   };
 
