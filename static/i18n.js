@@ -512,9 +512,17 @@
     };
     draw();
     document.body.append(cal);
-    const r = btn.getBoundingClientRect();
-    cal.style.left = Math.max(8, Math.min(r.left, innerWidth - cal.offsetWidth - 8)) + "px";
-    cal.style.top = (r.bottom + 4 + cal.offsetHeight > innerHeight ? r.top - cal.offsetHeight - 4 : r.bottom + 4) + "px";
+    // Below the field if it fits, else above, else beside it; always kept inside the window
+    // (on a short window the calendar scrolls inside itself).
+    const M = 8, r = btn.getBoundingClientRect();
+    if (cal.offsetHeight > innerHeight - 2 * M) { cal.style.maxHeight = innerHeight - 2 * M + "px"; cal.style.overflowY = "auto"; }
+    const W = cal.offsetWidth, H = cal.offsetHeight;
+    let left = r.left, top;
+    if (r.bottom + 4 + H <= innerHeight - M) top = r.bottom + 4;
+    else if (r.top - 4 - H >= M) top = r.top - 4 - H;
+    else { left = r.right + 6 + W <= innerWidth - M ? r.right + 6 : r.left; top = r.top + r.height / 2 - H / 2; }
+    cal.style.left = Math.max(M, Math.min(left, innerWidth - W - M)) + "px";
+    cal.style.top = Math.max(M, Math.min(top, innerHeight - H - M)) + "px";
     openCal = cal;
   }
   document.addEventListener("click", (ev) => { if (openCal && !ev.target.closest(".jcal, .jdate")) closeCal(); });
