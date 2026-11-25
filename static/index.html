@@ -161,6 +161,7 @@
         </label>
         <label class="check" title="Subtract each column's median per sensor (display only)"><input id="vFlat" type="checkbox"> Flatten columns</label>
         <button class="btn small-btn" id="vPanelBtn" title="Show the stretch controls (S)">Stretch controls</button>
+        <button class="btn small-btn" id="luckyBtn" hidden title="Rank this exposure's frames by star FWHM (arcsec) and stack the best ones in PlanetarySystemStacker">Lucky imaging…</button>
       </div>
       <div class="viewer" id="viewer">
         <canvas id="canvas"></canvas>
@@ -266,6 +267,28 @@
     </aside>
   </div>
 </div>
+
+<dialog id="luckyDialog">
+  <h3>Lucky imaging</h3>
+  <p class="muted small">Cuts a box around the pinned star out of every frame and opens it in
+    PlanetarySystemStacker (CMOS fork), which ranks the frames by star FWHM in arcseconds and stacks the best.</p>
+  <div id="lkStar" class="lk-star"></div>
+  <div class="row2">
+    <label>Box size
+      <select id="lkSize"><option value="256">256 × 256</option><option value="512" selected>512 × 512</option><option value="1024">1024 × 1024</option><option value="2048">2048 × 2048</option></select>
+    </label>
+    <label>Rank frames by
+      <select id="lkMode"><option value="median">Median FWHM of stars in the box</option><option value="reference">FWHM of the pinned star</option></select>
+    </label>
+  </div>
+  <div class="row2">
+    <label>First frame <input id="lkFirst" type="number" min="0" value="0"></label>
+    <label>Number of frames <input id="lkCount" type="number" min="2"></label>
+  </div>
+  <p class="muted small" id="lkInfo"></p>
+  <div class="dlg-err" id="lkMsg"></div>
+  <div class="dlg-btns"><button class="btn" id="lkClose">Close</button><button class="btn" id="lkFiles" title="Only write the SER file, don't open PSS">Prepare file only</button><button class="btn primary" id="lkGo">Open in PSS</button></div>
+</dialog>
 
 <dialog id="shareDialog">
   <h3>Share this view</h3>

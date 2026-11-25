@@ -431,6 +431,99 @@ def read_fits_frame(path, frame=0):
     return a, h
 
 
+def iter_frames(path, fmt, start=0, count=None, rows=None, cols=None):
+    """Yield (frame index, 2-D array) for frames start.. in ONE pass over the file.
+
+    rows=(y0, y1) and cols=(x0, x1) crop each frame (file pixel coordinates, end
+    exclusive). Uncompressed files skip straight to the rows needed; .zst files
+    are decompressed once from the start, not once per frame. Stops quietly
+    at the end of the stored frames.
+    """
+    stop = None if count is None else start + count
+    with open_stream(path) as f:
+        if is_fits(fmt):
+            _skip(f, _data_bytes(_parse_header(_read_fits_header_bytes(f))))
+            i = 0
+            while stop is None or i < stop:
+                try:
+                    h = _parse_header(_read_fits_header_bytes(f))
+                except ValueError:
+                    return
+                total = _data_bytes(h)
+                if h.get("NAXIS", 0) < 2:
+                    _skip(f, total)
+                    continue
+                if i < start:
+                    _skip(f, total); i += 1
+                    continue
+                bitpix = h["BITPIX"]
+                dtype = {8: ">u1", 16: ">i2", 32: ">i4", 64: ">i8", -32: ">f4", -64: ">f8"}[bitpix]
+                ny, nx, bpp = h["NAXIS2"], h["NAXIS1"], abs(bitpix) // 8
+                y0, y1 = rows or (0, ny)
+                y0, y1 = max(0, y0), min(ny, y1)
+                _skip(f, y0 * nx * bpp)
+                n = (y1 - y0) * nx * bpp
+                buf = f.read(n)
+                if len(buf) < n:
+                    return
+                _skip(f, total - y0 * nx * bpp - n)
+                a = np.frombuffer(buf, dtype=dtype).reshape(y1 - y0, nx)
+                if cols:
+                    a = a[:, max(0, cols[0]):cols[1]]
+                bscale, bzero = h.get("BSCALE", 1), h.get("BZERO", 0)
+                a = a.astype(np.float32) * bscale + bzero if (bscale != 1 or bzero != 0) else a.copy()
+                if y0 == 0 and (cols is None or cols[0] < 16):  # camera frame header pixels
+                    a[0, :16 - (cols[0] if cols else 0)] = np.median(a)
+                yield i, a
+                i += 1
+        else:
+            h, _ = _read_pack_header(f)
+            bpp, ny, nx, stride = _pack_layout(h)
+            _skip(f, start * stride)
+            i = start
+            while stop is None or i < stop:
+                buf = f.read(stride)
+                if len(buf) < stride:
+                    return
+                pix = buf[PACK_FRAME_META:]
+                if bpp == 16:
+                    a = np.frombuffer(pix, dtype="<u2").reshape(ny, nx)
+                else:
+                    b = np.frombuffer(pix, dtype=np.uint8, offset=8).reshape(-1, 3).astype(np.uint16)
+                    a = np.empty((b.shape[0], 2), dtype=np.uint16)
+                    a[:, 0] = (b[:, 0] << 4) | (b[:, 1] >> 4)
+                    a[:, 1] = ((b[:, 1] & 0xF) << 8) | b[:, 2]
+                    a = a.reshape(ny, nx)
+                y0, y1 = rows or (0, ny)
+                a = a[max(0, y0):y1, max(0, cols[0]):cols[1]] if cols else a[max(0, y0):y1]
+                a = a.copy()
+                if y0 <= 0 and (cols is None or cols[0] < 16):
+                    a[0, :16 - (cols[0] if cols else 0)] = np.median(a)
+                yield i, a
+                i += 1
+
+
+def write_ser(path, frames, width, height, observer="", instrument="CMOS", telescope=""):
+    """Write 16-bit monochrome frames (an iterable of 2-D arrays) as a SER video, the
+    usual lucky-imaging format (PlanetarySystemStacker, AutoStakkert, ...). Returns
+    the number of frames written."""
+    import struct as _st
+    n = 0
+    with open(path, "wb") as f:
+        def header(count):
+            return _st.pack("<14s7i40s40s40s2q", b"LUCAM-RECORDER", 0, 0, 0, width, height, 16, count,
+                            observer.encode()[:40], instrument.encode()[:40], telescope.encode()[:40], 0, 0)
+        f.write(header(0))
+        for a in frames:
+            if a.shape != (height, width):
+                raise ValueError(f"frame shape {a.shape} differs from {(height, width)}")
+            f.write(np.clip(a, 0, 65535).astype("<u2").tobytes())
+            n += 1
+        f.seek(0)
+        f.write(header(n))
+    return n
+
+
 def read_frame(path, fmt, frame=0):
     """Pixels of one frame from a FITS or raw pack file: (2-D array, header)."""
     return read_fits_frame(path, frame) if is_fits(fmt) else read_pack_frame(path, frame)

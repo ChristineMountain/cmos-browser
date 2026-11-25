@@ -85,6 +85,7 @@ tracked, and overrides `config.toml`.
 | `port` | Server port. Set per user in `config.local.toml`. |
 | `auto_refresh_minutes` | Interval for automatic re-indexing (0 disables it) |
 | `viewer_url`, `viewer_root` | Link format for the port-8003 image viewer |
+| `pss_dir`, `lucky_dir` | Lucky imaging: where the PlanetarySystemStacker fork is installed (default `~/PlanetarySystemStacker`) and where SER files go (default `~/lucky-imaging`) |
 | `cache_max_mb`, `min_free_mb` | Thumbnail cache limits |
 | `everyone_can_edit`, `safe_sharing` | Access control for visitors other than the owner of the copy |
 | `local_utc_offset_hours` | Offset of the times in `*_meta.json` (Arizona, -7) |
@@ -248,6 +249,11 @@ The server is shared, so the application is deliberately conservative:
   CRVAL plus a fixed per-sensor CRPIX/CD (`SENSOR_GEOMETRY` in `cmosdata.py`).
   Files without a WCS (pack files, older nights) get the same WCS from the
   pointing. Plate solves of 30 frames put it 10-50" from the true position.
+- Lucky imaging (`/api/exposures/{id}/lucky`) reads all frames in one pass
+  (`iter_frames`, only the rows needed from uncompressed files), writes a 16-bit
+  SER plus `<name>.pss.json` for the PSS fork, and starts `run-pss.sh --gui`.
+  Sensors 3-5 are rotated 180 degrees so the box looks as in the viewer. Only
+  requests from this copy's own account (checked in `/proc/net/tcp`) may start it.
 - The watchdog re-reads the port from `config.local.toml` on every check, so a
   port change never makes it restart a healthy server.
 - Thumbnails subtract the median of each column. The viewer shows raw values

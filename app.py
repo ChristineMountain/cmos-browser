@@ -291,6 +291,7 @@ def stats(request: Request):
     r["user"] = current_user(request)
     r["sync"] = sync.status
     r["version"] = VERSION
+    r["lucky"] = {"allowed": is_me(request), "installed": pss_installed(), "pss_dir": PSS_DIR, "dir": LUCKY_DIR}
     return r
 
 
@@ -778,6 +779,175 @@ def pixels(eid: int, request: Request, sensor: str = "all", frame: int = Query(0
         while sum(len(v[0]) for v in _PIX.values()) > 64_000_000:
             _PIX.popitem(last=False)
     return Response(body, media_type="application/octet-stream", headers=hdr)
+
+
+# ------------------------------------------------------------------ lucky imaging
+# "Lucky imaging" on the exposure page: cut a box around the pinned star out of
+# every frame, save it as a SER video (+ settings in <name>.pss.json) and open it
+# in PlanetarySystemStacker (our fork ranks frames by star FWHM in arcsec).
+# It opens a window on the desktop and writes into the home folder of the
+# account running this copy, so only that account may start it.
+
+PSS_DIR = os.path.expanduser(CFG.get("pss_dir") or "~/PlanetarySystemStacker")
+LUCKY_DIR = os.path.expanduser(CFG.get("lucky_dir") or "~/lucky-imaging")
+LUCKY_MAX_BYTES = 4_000_000_000
+LUCKY, LUCKY_LOCK = {}, threading.Lock()
+
+
+def connecting_uid(request):
+    """Account (uid) that opened this local TCP connection, from the kernel's socket table."""
+    if request.client is None or request.client.host not in ("127.0.0.1", "::1"):
+        return None
+    port = f"{request.client.port:04X}"
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(table) as f:
+                next(f)
+                for line in f:
+                    col = line.split()
+                    if col[1].endswith(":" + port) and col[2].endswith(f":{CFG['port']:04X}"):
+                        return int(col[7])
+        except (OSError, ValueError, IndexError, StopIteration):
+            continue
+    return None
+
+
+def is_me(request):
+    """The request comes from this copy's own account (not a coworker following a shared link)."""
+    return connecting_uid(request) == os.getuid()
+
+
+def pss_installed():
+    return os.access(os.path.join(PSS_DIR, "run-pss.sh"), os.X_OK) and os.path.isdir(os.path.join(PSS_DIR, ".env"))
+
+
+def desktop_env():
+    """Environment for starting a window on this account's desktop (DISPLAY etc.)."""
+    env = dict(os.environ)
+    if not env.get("DISPLAY"):  # started without one (e.g. by hand): borrow Firefox's
+        for pid in filter(str.isdigit, os.listdir("/proc")):
+            try:
+                if os.stat(f"/proc/{pid}").st_uid != os.getuid():
+                    continue
+                with open(f"/proc/{pid}/environ", "rb") as f:
+                    pe = dict(kv.split(b"=", 1) for kv in f.read().split(b"\0") if b"=" in kv)
+                if b"DISPLAY" in pe:
+                    for k in (b"DISPLAY", b"XAUTHORITY", b"DBUS_SESSION_BUS_ADDRESS"):
+                        if k in pe:
+                            env[k.decode()] = pe[k].decode()
+                    break
+            except OSError:
+                continue
+    return env
+
+
+class LuckyIn(BaseModel):
+    sensor: int
+    x: float  # full-resolution file pixel (0 = left edge of the first pixel), centre of the box
+    y: float
+    size: int = Field(512, ge=64, le=2560)
+    first: int = Field(0, ge=0)
+    count: int | None = Field(None, ge=2)
+    mode: str = Field("median", pattern="^(median|reference)$")
+    open: bool = True
+    ra: float | None = None
+    dec: float | None = None
+
+
+def sensor_shape(f):
+    if cd.is_fits(f["format"]):
+        h = cd.read_fits_headers(f["path"], 1)[-1]
+        return h["NAXIS2"], h["NAXIS1"]
+    _, ny, nx, _ = cd._pack_layout(cd.read_pack_header(f["path"]))
+    return ny, nx
+
+
+def _lucky_run(job, e, f, b, crop, n, ser, settings):
+    st = LUCKY[job]
+    try:
+        (y0, y1), (x0, x1) = crop
+        rot = f["sensor"] in cd.ROTATED_180
+
+        def frames():
+            for i, a in cd.iter_frames(f["path"], f["format"], start=b.first, count=n, rows=(y0, y1), cols=(x0, x1)):
+                st["done"] = i - b.first + 1
+                yield a[::-1, ::-1] if rot else a  # as shown in CMOS Browser: north up, east left
+        with HEAVY:
+            st["written"] = cd.write_ser(ser + ".part", frames(), x1 - x0, y1 - y0,
+                                         observer=ME, telescope=f"{e['folder']}/{e['prefix']} sensor {f['sensor']}")
+        if st["written"] < 2:
+            raise ValueError("fewer than 2 frames could be read")
+        os.replace(ser + ".part", ser)
+        settings["source"]["frames_written"] = st["written"]
+        with open(os.path.splitext(ser)[0] + ".pss.json", "w") as fh:
+            json.dump(settings, fh, indent=2)
+        if b.open:
+            st["state"] = "opening"
+            import subprocess
+            log = open(os.path.splitext(ser)[0] + "_pss-console.txt", "ab")
+            subprocess.Popen([os.path.join(PSS_DIR, "run-pss.sh"), "--gui", ser], env=desktop_env(),
+                             stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
+        st["state"] = "done"
+    except Exception as ex:
+        st.update(state="error", message=str(ex))
+        try:
+            os.remove(ser + ".part")
+        except OSError:
+            pass
+
+
+@app.post("/api/exposures/{eid}/lucky")
+def start_lucky(eid: int, b: LuckyIn, request: Request):
+    """Prepare a SER video of a box around a star from every frame, and open it in PSS."""
+    if not is_me(request):
+        raise HTTPException(403, "Lucky imaging writes files and opens a window on the desktop of this "
+                                 "copy's owner, so only they can start it. Use your own CMOS Browser.")
+    if b.open and not pss_installed():
+        raise HTTPException(400, f"PlanetarySystemStacker is not installed in {PSS_DIR}.")
+    e = get_exposure(eid)
+    f = next((x for x in preview_files(eid, request) if x["sensor"] == b.sensor), None)
+    if not f:
+        raise HTTPException(404, "no readable image file for this sensor")
+    ny, nx = sensor_shape(f)
+    size = min(b.size, nx, ny)
+    stored = cd.stored_frame_count(f["path"], f["format"]) or e["n_frames"] or 1
+    n = max(0, min(b.count or stored, stored - b.first))
+    if n < 2:
+        raise HTTPException(400, "lucky imaging needs at least 2 frames")
+    if size * size * 2 * n > LUCKY_MAX_BYTES:
+        raise HTTPException(400, f"{n} frames of {size}x{size} would be {size*size*2*n/1e9:.1f} GB; "
+                                 "use a smaller box or fewer frames")
+    x0 = int(min(max(0, round(b.x - size / 2)), nx - size))
+    y0 = int(min(max(0, round(b.y - size / 2)), ny - size))
+    rot = b.sensor in cd.ROTATED_180
+    u, v = b.x - x0, b.y - y0  # star in the box (pixel-edge coordinates)
+    ref = [size - u - 0.5, size - v - 0.5] if rot else [u - 0.5, v - 0.5]  # SER pixel centres
+    w = cd.pointing_wcs(b.sensor, e["ra"], e["dec"])
+    scale = abs(w["cd"][0][0]) * 3600 if w else 0.2272
+    os.makedirs(os.path.join(LUCKY_DIR, e["folder"]), exist_ok=True)
+    part = f"_f{b.first}-{b.first + n - 1}" if (b.first or n < stored) else ""
+    ser = os.path.join(LUCKY_DIR, e["folder"], f"{e['prefix']}_s{b.sensor}_x{x0}_y{y0}_{size}{part}.ser")
+    settings = {"rank_method": "FWHM (arcsec)", "pixel_scale": round(scale, 5), "fwhm_mode": b.mode,
+                "reference_star": [round(ref[0], 2), round(ref[1], 2)] if b.mode == "reference" else None,
+                "search_radius": 25,
+                "source": {"exposure": f"{e['folder']}/{e['prefix']}", "object": e["object"], "filter": e["filter"],
+                           "night": e["night"], "exptime_s": e["exptime"], "sensor": b.sensor, "file": f["path"],
+                           "box_in_file": {"x0": x0, "y0": y0, "size": size}, "rotated_180": rot,
+                           "first_frame": b.first, "frames_requested": n,
+                           "star_ra_deg": b.ra, "star_dec_deg": b.dec}}
+    job = secrets.token_hex(6)
+    with LUCKY_LOCK:
+        LUCKY[job] = {"state": "reading", "done": 0, "total": n, "path": ser, "message": None}
+    threading.Thread(target=_lucky_run, args=(job, e, f, b, ((y0, y0 + size), (x0, x0 + size)), n, ser, settings),
+                     daemon=True).start()
+    return {"job": job, "path": ser, "frames": n, "size": size, "bytes": size * size * 2 * n}
+
+
+@app.get("/api/lucky/{job}")
+def lucky_status(job: str):
+    if job not in LUCKY:
+        raise HTTPException(404, "unknown job")
+    return LUCKY[job]
 
 
 # ------------------------------------------------------------------ organizing (user database)

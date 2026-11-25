@@ -115,11 +115,12 @@ $("#themeBtn").onclick = () => {
 };
 $("#menuBtn").onclick = () => $("#sidebar").classList.toggle("open");
 
-let seenIndexed = null, seenVersion = null, viewerCfg = { url: "", root: "" };
+let seenIndexed = null, seenVersion = null, viewerCfg = { url: "", root: "" }, luckyCfg = null;
 async function loadStats() {
   try {
     const s = await api("/api/stats");
     viewerCfg = { url: s.viewer_url || "", root: s.viewer_root || "" };
+    luckyCfg = s.lucky || null;
     canEdit = !!s.can_edit;
     renderSync(s);
     document.body.classList.toggle("readonly", !canEdit);
@@ -1000,6 +1001,7 @@ function setupViewer(e) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   $("#vReadout").hidden = true;
   setPin(null);
+  $("#luckyBtn").hidden = !(luckyCfg && luckyCfg.allowed && (e.n_frames || 1) > 1 && e.preview_sensors.length);
   const sensors = e.preview_sensors;
   const controls = $$(".viewer-controls select, .viewer-controls input, .viewer-controls button, .stretch-panel input, .sp-btn, .frame-bar input, .frame-bar button");
   $(".viewer-controls").hidden = $(".zoom-btns").hidden = $("#frameBar").hidden = !sensors.length;
@@ -1612,3 +1614,65 @@ $("#shareCopy").onclick = async () => {
   $("#shareMsg").textContent = "Copied. Paste it into an email or chat.";
 };
 loadSide().catch((e) => { $("#sideList").innerHTML = `<li class="muted">${esc(e.message)}</li>`; });
+
+// ------------------------------------------------------------------ lucky imaging (PlanetarySystemStacker fork)
+function luckyFrames() {
+  const e = cur, by = e.stored_frames_by_sensor || {};
+  return (pin && by[pin.sensor]) || e.n_frames || 1;
+}
+function luckyUpdate() {
+  const size = +$("#lkSize").value, first = +$("#lkFirst").value || 0;
+  const total = luckyFrames(), n = Math.max(0, Math.min(+$("#lkCount").value || total, total - first));
+  const mb = size * size * 2 * n / 1e6;
+  $("#lkInfo").textContent = `${fmt.num(n)} frames of ${size} × ${size} pixels (${(size * 0.2272 / 60).toFixed(1)}′ across): `
+    + `${mb >= 1000 ? (mb / 1000).toFixed(1) + " GB" : Math.round(mb) + " MB"}, saved in ${luckyCfg.dir}.`;
+  $("#lkGo").disabled = $("#lkFiles").disabled = !pin || n < 2 || mb > 4000;
+}
+$("#luckyBtn").onclick = () => {
+  const d = $("#luckyDialog");
+  $("#lkMsg").textContent = "";
+  $("#lkMsg").style.color = "";
+  $("#lkStar").innerHTML = pin
+    ? `Pinned star: sensor ${pin.sensor}, pixel (${Math.floor(pin.ex)}, ${Math.floor(pin.ey)}) · RA <code>${sexa(pin.ra, true)}</code> Dec <code>${sexa(pin.dec, false)}</code>`
+    : `<b>First click a star on the image to pin it.</b> The box is centred on the pinned star.`;
+  $("#lkCount").placeholder = `all (${fmt.num(luckyFrames())})`;
+  $("#lkGo").hidden = !luckyCfg.installed;
+  if (!luckyCfg.installed) {
+    $("#lkMsg").textContent = `PlanetarySystemStacker (CMOS fork) is not installed. In a terminal:\n`
+      + `git clone https://github.com/ChristineMountain/PlanetarySystemStacker.git ${luckyCfg.pss_dir}\n${luckyCfg.pss_dir}/run-pss.sh install`;
+  }
+  luckyUpdate();
+  d.showModal();
+};
+["#lkSize", "#lkFirst", "#lkCount"].forEach((s) => $(s).addEventListener("input", luckyUpdate));
+$("#lkClose").onclick = () => $("#luckyDialog").close();
+async function startLucky(open) {
+  if (!pin) return;
+  const msgEl = $("#lkMsg");
+  msgEl.style.color = "";
+  $("#lkGo").disabled = $("#lkFiles").disabled = true;
+  const body = { sensor: pin.sensor, x: pin.ex, y: pin.ey, size: +$("#lkSize").value, mode: $("#lkMode").value,
+    first: +$("#lkFirst").value || 0, open, ra: pin.ra, dec: pin.dec };
+  if (+$("#lkCount").value) body.count = +$("#lkCount").value;
+  try {
+    const r = await post(`/api/exposures/${cur.id}/lucky`, body);
+    let st;
+    do {
+      await new Promise((res) => setTimeout(res, 700));
+      st = await api(`/api/lucky/${r.job}`);
+      msgEl.textContent = st.state === "reading" ? `Reading frames… ${fmt.num(st.done)} of ${fmt.num(st.total)}` : "Opening PlanetarySystemStacker…";
+    } while (st.state === "reading" || st.state === "opening");
+    if (st.state === "error") throw new Error(st.message);
+    msgEl.style.color = "var(--ok)";
+    msgEl.textContent = (open ? "Opened in PlanetarySystemStacker (it may take a few seconds to appear). Press Start there.\n" : "")
+      + `Saved ${fmt.num(st.written)} frames: ${st.path}`;
+  } catch (err) {
+    msgEl.style.color = "var(--bad)";
+    msgEl.textContent = err.message;
+  } finally {
+    luckyUpdate();
+  }
+}
+$("#lkGo").onclick = () => startLucky(true);
+$("#lkFiles").onclick = () => startLucky(false);
+

@@ -283,6 +283,37 @@ slider to move through frames; only the frame where you stop is read. The
 arrow buttons (or `[` and `]`) step one frame, and the play button (or `P`)
 loops through the frames. A frame number can also be entered directly.
 
+### Lucky imaging
+
+Multi-frame exposures have a **Lucky imaging…** button above the image. It sends
+the frames to PlanetarySystemStacker (PSS), in our fork that ranks frames by
+how sharp the stars are, in arcseconds, and stacks the best ones.
+
+1. Click a star on the image to pin it.
+2. Click **Lucky imaging…** and choose:
+   - **Box size**: the square cut out around the pinned star from every frame
+     (512 × 512 pixels is about 1.9′ across).
+   - **Rank frames by**: the median FWHM of the stars in the box, or the FWHM
+     of the pinned star only.
+   - **First frame / Number of frames**: leave empty for all frames.
+3. Click **Open in PSS**. CMOS Browser reads the frames (a progress count is
+   shown), saves them as a SER video in `~/lucky-imaging/<night>/`, and opens
+   PSS with it. Press **Start** in PSS.
+
+PSS writes its log (with the best, median and worst FWHM in arcseconds), a
+table of every frame's FWHM and rank (`…_fwhm.csv`), and the stacked image next
+to the SER file. **Prepare file only** saves the SER file without opening PSS.
+
+Only you can start this from your own copy (it opens a window on your desktop
+and writes into your home folder). It needs the PSS fork installed once:
+`git clone https://github.com/ChristineMountain/PlanetarySystemStacker.git ~/PlanetarySystemStacker`,
+then `~/PlanetarySystemStacker/run-pss.sh install`. The dialog shows these
+commands when it is missing.
+
+Note: PSS's stacking was made for the Moon and planets. On star fields its
+fine alignment often fails, so the stack is sharper than an average frame but
+not as sharp as the best frames. The frame ranking itself is reliable.
+
 ### Information tabs
 
 <img src="images/header.jpg" alt="Header tab" width="300" align="right">
