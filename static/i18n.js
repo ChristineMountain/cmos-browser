@@ -417,7 +417,7 @@
   ];
 
   // Data, not interface: never translate inside these.
-  const SKIP = "#langBtn, pre, code, textarea, .mono, .card-title, .sidebar li .name, .chip.tag, .card-tags, .other b, .other-note, #dTitle, #hdrBody, #metaBody td, .files td.mono";
+  const SKIP = "#langBtn, .jcal, .jdate, pre, code, textarea, .mono, .card-title, .sidebar li .name, .chip.tag, .card-tags, .other b, .other-note, #dTitle, #hdrBody, #metaBody td, .files td.mono";
 
   function tr(s) {
     if (typeof s !== "string") return s;
@@ -464,7 +464,87 @@
   window.confirm = (m) => _confirm(tr(String(m)));
   window.prompt = (m, d) => _prompt(tr(String(m)), d);
 
+  // Date fields: Firefox draws <input type=date> in its own language, so in Japanese mode
+  // the native field is hidden and replaced by a button that opens a Japanese calendar
+  // (weeks start on Sunday; Sundays red, Saturdays blue). The hidden field keeps the
+  // ISO value and fires "change", so the rest of the app is unaware of the swap.
+  const WD = "日月火水木金土";
+  const pad = (n) => String(n).padStart(2, "0");
+  const iso = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
+  const label = (v) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v || "")) return "";
+    const [y, m, d] = v.split("-").map(Number);
+    return `${y}/${pad(m)}/${pad(d)}(${WD[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]})`;
+  };
+  let openCal = null;
+  function closeCal() { openCal?.remove(); openCal = null; }
+  function showCal(input, btn) {
+    closeCal();
+    const cur = /^\d{4}-\d{2}-\d{2}$/.test(input.value) ? input.value.split("-").map(Number) : null;
+    const now = new Date();
+    let y = cur ? cur[0] : now.getFullYear(), m = cur ? cur[1] - 1 : now.getMonth();
+    const cal = document.createElement("div");
+    cal.className = "jcal";
+    const pick = (v) => { input.value = v; input.dispatchEvent(new Event("change", { bubbles: true })); closeCal(); btn.focus(); };
+    const draw = () => {
+      const first = new Date(y, m, 1).getDay(), days = new Date(y, m + 1, 0).getDate();
+      const today = iso(now.getFullYear(), now.getMonth(), now.getDate());
+      let cells = "";
+      for (let i = 0; i < first; i++) cells += "<span></span>";
+      for (let d = 1; d <= days; d++) {
+        const v = iso(y, m, d), wd = (first + d - 1) % 7;
+        const cls = [wd === 0 ? "sun" : wd === 6 ? "sat" : "", v === input.value ? "sel" : "", v === today ? "today" : ""].join(" ");
+        cells += `<button type="button" class="${cls}" data-v="${v}">${d}</button>`;
+      }
+      cal.innerHTML = `<div class="jcal-head"><button type="button" data-nav="-1" aria-label="前の月">‹</button>
+          <b>${y}年${m + 1}月</b><button type="button" data-nav="1" aria-label="次の月">›</button></div>
+        <div class="jcal-grid">${[...WD].map((w, i) => `<i class="${i === 0 ? "sun" : i === 6 ? "sat" : ""}">${w}</i>`).join("")}${cells}</div>
+        <div class="jcal-foot"><button type="button" data-act="today">今日</button><button type="button" data-act="clear">クリア</button></div>`;
+    };
+    cal.onclick = (ev) => {
+      ev.stopPropagation();
+      const b = ev.target.closest("button");
+      if (!b) return;
+      if (b.dataset.nav) { m += +b.dataset.nav; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } draw(); }
+      else if (b.dataset.v) pick(b.dataset.v);
+      else if (b.dataset.act === "today") pick(iso(now.getFullYear(), now.getMonth(), now.getDate()));
+      else if (b.dataset.act === "clear") pick("");
+    };
+    draw();
+    document.body.append(cal);
+    const r = btn.getBoundingClientRect();
+    cal.style.left = Math.max(8, Math.min(r.left, innerWidth - cal.offsetWidth - 8)) + "px";
+    cal.style.top = (r.bottom + 4 + cal.offsetHeight > innerHeight ? r.top - cal.offsetHeight - 4 : r.bottom + 4) + "px";
+    openCal = cal;
+  }
+  document.addEventListener("click", (ev) => { if (openCal && !ev.target.closest(".jcal, .jdate")) closeCal(); });
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && openCal) { ev.stopPropagation(); closeCal(); } }, true);
+  addEventListener("resize", closeCal);
+  document.addEventListener("scroll", closeCal, true);
+
+  function japaneseDateInput(input) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "jdate";
+    const show = () => {
+      const t = label(input.value);
+      btn.textContent = t || "日付を選択";
+      btn.classList.toggle("empty", !t);
+    };
+    // The app sets .value directly when the address changes; keep the button in step.
+    const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    Object.defineProperty(input, "value", {
+      get() { return desc.get.call(this); },
+      set(v) { desc.set.call(this, v); show(); },
+    });
+    btn.onclick = (ev) => { ev.stopPropagation(); openCal ? closeCal() : showCal(input, btn); };
+    input.hidden = true;
+    input.after(btn);
+    show();
+  }
+
   const start = () => {
+    document.querySelectorAll("input[type=date]").forEach(japaneseDateInput);
     walk(document.body);
     new MutationObserver((muts) => {
       for (const m of muts) {

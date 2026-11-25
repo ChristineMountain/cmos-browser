@@ -345,3 +345,30 @@ body.readonly .organize:has(#dNote:placeholder-shown) .stars:not(:has(.on)) { di
 /* Shown on every screen when a newer version of the app is running. */
 .update-bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--accent); border-radius: 999px; padding: 6px 8px 6px 16px; box-shadow: 0 6px 20px rgba(0,0,0,.25); font-size: 13px; }
 .update-bar[hidden] { display: none; }
+
+/* Japanese calendar (static/i18n.js): replaces the browser's date picker in Japanese mode */
+.jdate {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text);
+  padding: 6px 6px; width: 100%; min-width: 0; text-align: left; font: inherit; font-size: 12.5px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.jdate.empty { color: var(--muted); }
+.jdate:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.jcal {
+  position: fixed; z-index: 1000; width: 252px; padding: 10px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); color: var(--text);
+}
+.jcal button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; border-radius: 6px; }
+.jcal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.jcal-head b { font-size: 14px; }
+.jcal-head button { width: 30px; height: 28px; font-size: 18px; }
+.jcal-head button:hover, .jcal-foot button:hover, .jcal-grid button:hover { background: var(--surface-2); }
+.jcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+.jcal-grid i { font-style: normal; font-size: 11.5px; color: var(--muted); padding: 2px 0 4px; }
+.jcal-grid button { height: 30px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.jcal .sun { color: #e5484d; }
+.jcal .sat { color: #3e7bfa; }
+.jcal-grid button.today { box-shadow: inset 0 0 0 1px var(--accent); }
+.jcal-grid button.sel, .jcal-grid button.sel:hover { background: var(--accent); color: #fff; }
+.jcal-foot { display: flex; justify-content: space-between; margin-top: 8px; border-top: 1px solid var(--border); padding-top: 6px; }
+.jcal-foot button { padding: 4px 10px; font-size: 12.5px; color: var(--accent); }
